@@ -248,7 +248,6 @@ struct usb_configuration {
 int usb_add_config(struct usb_composite_dev *,
 		struct usb_configuration *);
 
-
 /**
  * struct usb_composite_driver - groups configurations into a gadget
  * @name: For diagnostics, identifies the driver.
@@ -360,16 +359,19 @@ struct usb_composite_dev {
 	/* protects at least deactivation count */
 	spinlock_t			lock;
 
-	struct switch_dev sdev;
-	/* used by usb_composite_force_reset to avoid signalling switch changes */
-	bool				mute_switch;
+	/* switch indicating connected/disconnected state */
+	struct switch_dev		sw_connected;
+	/* switch indicating current configuration */
+	struct switch_dev		sw_config;
+	/* current connected state for sw_connected */
+	bool				connected;
+    bool                mute_switch;
+
 	struct work_struct switch_work;
 #ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
 /* soonyong.cho : Below values are used for samsung composite framework. */
 	unsigned int			product_num; 	/* product number (ex : 0, 1, 2, ..) */
 	struct android_usb_product 	*products;	/* products list */
-	/* number of multi configuration */
-	int				multi_configuration;
 #endif
 };
 
