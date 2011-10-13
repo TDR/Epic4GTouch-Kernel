@@ -1,8 +1,8 @@
-/* This file is auto generated, version 2 */
+/* This file is auto generated, version 0 */
 /* SMP PREEMPT */
 #define UTS_MACHINE "arm"
-#define UTS_VERSION "#2 SMP PREEMPT Sat Oct 8 04:26:16 UTC 2011"
-#define LINUX_COMPILE_TIME "04:26:16"
+#define UTS_VERSION "#0 SMP PREEMPT Thu Oct 13 07:05:49 UTC 2011"
+#define LINUX_COMPILE_TIME "07:05:49"
 #define LINUX_COMPILE_BY "taks"
 #define LINUX_COMPILE_HOST "electrike"
 #define LINUX_COMPILE_DOMAIN "mshome.net"
