@@ -286,7 +286,6 @@ static inline void check_pdp_table(const char*, int);
 static void cmd_error_display_handler(void);
 
 
-#ifdef _ENABLE_ERROR_DEVICE
 static unsigned int dpram_err_len = 0;
 static char         dpram_err_buf[DPRAM_ERR_MSG_LEN];
 static unsigned int dpram_err_cause = 0;
@@ -305,7 +304,7 @@ static struct fasync_struct *dpram_dump_async_q;
 
 extern void usb_switch_mode(int);
 extern int sec_debug_level();
-#endif    /* _ENABLE_ERROR_DEVICE */
+
 
 
 #ifndef DISABLE_IPC_DEBUG
@@ -1773,7 +1772,9 @@ static int dpram_tty_ioctl(struct tty_struct *tty, struct file *file, unsigned i
         // Silent reset
         case MBX_CMD_PHONE_RESET:
             LOGA("IOCTL cmd = MBX_CMD_PHONE_RESET\n");
+#ifdef _ENABLE_ERROR_DEVICE
             request_phone_reset();
+#endif
             return 0;
 
         case DPRAM_PHONE_RAMDUMP_ON:
@@ -1888,12 +1889,13 @@ static int dpram_tty_ioctl(struct tty_struct *tty, struct file *file, unsigned i
             LOGE("succeeded in dpram_wait_response()!!!\n");
 		dpram_clear_response();
 
+#ifdef CONFIG_KERNEL_DEBUG_SEC
             // goto Upload mode
             if (kernel_sec_get_debug_level() != KERNEL_SEC_DEBUG_LEVEL_LOW) {
                 LOGE("Upload Mode!!!\n");
                 kernel_sec_dump_cp_handle2();
             }
-
+#endif
             return 0;
         }
 
@@ -2044,11 +2046,11 @@ static int dpram_dump_ioctl(struct inode *inode, struct file *filp,
             LOGA("IOCTL cmd = DPRAM_PHONE_CPRAMDUMP_DONE\n");
 
             close_cp_ramdump();
-
+#ifdef CONFIG_KERNEL_DEBUG_SEC
             // Go to Upload mode
             if (kernel_sec_get_debug_level() != KERNEL_SEC_DEBUG_LEVEL_LOW)
                 kernel_sec_dump_cp_handle2();
-
+#endif
             return 0;
         }
 
