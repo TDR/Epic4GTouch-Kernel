@@ -178,6 +178,7 @@ UKKFILES=\
         $(FILES_PREFIX)$(OSKOS)/mali_ukk_mem.o \
         $(FILES_PREFIX)$(OSKOS)/mali_ukk_gp.o \
         $(FILES_PREFIX)$(OSKOS)/mali_ukk_pp.o \
+        $(FILES_PREFIX)$(OSKOS)/mali_ukk_vsync.o \
         $(FILES_PREFIX)$(OSKOS)/mali_ukk_core.o
 
 mali-y := \
@@ -186,6 +187,8 @@ mali-y := \
 	$(KBUILDROOT)linux/mali_osk_indir_mmap.o \
 	$(KBUILDROOT)common/mali_kernel_rendercore.o \
 	$(KBUILDROOT)common/mali_kernel_descriptor_mapping.o \
+    $(KBUILDROOT)common/mali_kernel_vsync.o \
+    $(KBUILDROOT)linux/mali_kernel_sysfs.o \
 	$(KBUILDROOT)$(MALI_PLATFORM_FILE) \
 	$(KBUILDROOT)$(OSKFILES) \
 	$(KBUILDROOT)$(UKKFILES) 
@@ -255,16 +258,6 @@ ifneq ($(call submodule_enabled, $M, MALI400L2),0)
         # Mali Level2 cache in use
         EXTRA_CFLAGS += -DUSING_MALI400_L2_CACHE
         mali-y += common/mali_kernel_l2_cache.o
-endif
-
-ifeq ($(USING_MALI_DVFS_ENABLED),1)
-mali-y += \
-	platform/orion-m400/mali_platform_dvfs.o
-endif
-
-ifeq ($(CONFIG_GPU_CLOCK_CONTROL),y)
-mali-y += \
-	common/gpu_clock_control.o
 endif
 
 ifeq ($(PANIC_ON_WATCHDOG_TIMEOUT),1)

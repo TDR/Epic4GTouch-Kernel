@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 ARM Limited. All rights reserved.
+ * Copyright (C) 2010-2011 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -94,7 +94,7 @@ static _mali_osk_errcode_t mali200_renderunit_create(_mali_osk_resource_t * reso
 static void mali200_subsystem_broadcast_notification(mali_core_notification_message message, u32 data);
 #endif
 #if MALI_STATE_TRACKING
-void mali200_subsystem_dump_state(void);
+u32 mali200_subsystem_dump_state(char *buf, u32 size);
 #endif
 
 /* Internal support functions  */
@@ -776,14 +776,13 @@ static int subsystem_mali200_irq_handler_bottom_half(struct mali_core_renderunit
 		_mali_profiling_add_event(MALI_PROFILING_EVENT_TYPE_STOP|MALI_PROFILING_MAKE_EVENT_CHANNEL_PP(core->core_number), 0, 0, 0, 0, 0); /* add GP and L2 counters and return status */
 #endif
 		/* no progress detected, killed by the watchdog */
-		MALI_PRINT( ("M200: SW-Timeout Rawstat: 0x%x Tile_addr: 0x%x Status: 0x%x.\n", irq_readout ,current_tile_addr ,core_status) );
+		MALI_DEBUG_PRINT(2, ("M200: SW-Timeout Rawstat: 0x%x Tile_addr: 0x%x Status: 0x%x.\n", irq_readout ,current_tile_addr ,core_status) );
 		/* In this case will the system outside cleanup and reset the core */
-
-		MALI_PANIC("%s Watchdog timeout (rawstat: 0x%x tile_addr: 0x%x status: 0x%x)\n", MALI_PP_SUBSYSTEM_NAME, irq_readout, current_tile_addr, core_status);
 
 #if MALI_STATE_TRACKING
 		_mali_osk_atomic_inc(&job->session->jobs_ended);
 #endif
+
 		return JOB_STATUS_END_HANG;
    	}
 	/* HW watchdog triggered or an existing hang check passed? */
@@ -791,7 +790,7 @@ static int subsystem_mali200_irq_handler_bottom_half(struct mali_core_renderunit
 	{
 		/* check interval in ms */
 		u32 timeout = mali_core_hang_check_timeout_get();
-		MALI_PRINT( ("M200: HW/SW Watchdog triggered, checking for progress in %d ms\n", timeout));
+		MALI_DEBUG_PRINT(3, ("M200: HW/SW Watchdog triggered, checking for progress in %d ms\n", timeout));
 		job200->last_tile_list_addr = current_tile_addr;
 		/* hw watchdog triggered, set up a progress checker every HANGCHECK ms */
 		_mali_osk_timer_add(core->timer_hang_detection, _mali_osk_time_mstoticks(timeout));
@@ -813,19 +812,20 @@ static int subsystem_mali200_irq_handler_bottom_half(struct mali_core_renderunit
 		_mali_profiling_add_event(MALI_PROFILING_EVENT_TYPE_STOP|MALI_PROFILING_MAKE_EVENT_CHANNEL_PP(core->core_number), 0, 0, 0, 0, 0); /* add GP and L2 counters and return status */
 #endif
 
-		MALI_PRINT( ("Mali PP: Job: 0x%08x  CRASH?  Rawstat: 0x%x Tile_addr: 0x%x Status: 0x%x\n",
+		MALI_DEBUG_PRINT(1, ("Mali PP: Job: 0x%08x  CRASH?  Rawstat: 0x%x Tile_addr: 0x%x Status: 0x%x\n",
 				(u32)job200->user_input.user_job_ptr, irq_readout ,current_tile_addr ,core_status) ) ;
 
 		if (irq_readout & MALI200_REG_VAL_IRQ_BUS_ERROR)
 		{
 			u32 bus_error = mali_core_renderunit_register_read(core, MALI200_REG_ADDR_MGMT_BUS_ERROR_STATUS);
 
-			MALI_PRINT(("Bus error status: 0x%08X\n", bus_error));
+			MALI_DEBUG_PRINT(1, ("Bus error status: 0x%08X\n", bus_error));
 			MALI_DEBUG_PRINT_IF(1, (bus_error & 0x01), ("Bus write error from id 0x%02x\n", (bus_error>>2) & 0x0F));
 			MALI_DEBUG_PRINT_IF(1, (bus_error & 0x02), ("Bus read error from id 0x%02x\n", (bus_error>>6) & 0x0F));
 			MALI_DEBUG_PRINT_IF(1, (0 == (bus_error & 0x03)), ("Bus error but neither read or write was set as the error reason\n"));
 			(void)bus_error;
 		}
+
 #if MALI_STATE_TRACKING
 		_mali_osk_atomic_inc(&job->session->jobs_ended);
 #endif
@@ -839,7 +839,7 @@ to a created mali_core_job object with the data given from userspace */
 static _mali_osk_errcode_t subsystem_mali200_get_new_job_from_user(struct mali_core_session * session, void * argument)
 {
 	mali200_job *job200;
-	mali_core_job *job=NULL;
+	mali_core_job *job = NULL;
 	mali_core_job *previous_replaced_job;
 	_mali_osk_errcode_t err = _MALI_OSK_ERR_OK;
 	_mali_uk_pp_start_job_s * user_ptr_job_input;
@@ -971,9 +971,12 @@ function_exit:
 	}
 #if MALI_STATE_TRACKING
 	if (_MALI_UK_START_JOB_STARTED==user_ptr_job_input->status)
-        {
-                if(job)job->job_nr=_mali_osk_atomic_inc_return(&session->jobs_received);
-        }
+	{
+		if(job)
+		{
+			job->job_nr=_mali_osk_atomic_inc_return(&session->jobs_received);
+		}
+	}
 #endif
 
 	MALI_ERROR(err);
@@ -1117,13 +1120,6 @@ static void subsystem_mali200_renderunit_reset_core(struct mali_core_renderunit 
 		case MALI_CORE_RESET_STYLE_HARD:
 			mali200_reset_hard(core);
 			break;
-#if MALI_STATE_TRACKING
-		/* Temporary debug code. Use reset framework to print registers in log.. */
-		case 0xcafebabe:
-			MALI_PRINT(("      Core rawstat: 0x%08X \n",mali_core_renderunit_register_read(core, MALI200_REG_ADDR_MGMT_INT_RAWSTAT) ));
-			MALI_PRINT(("      Core status: 0x%08X \n", mali_core_renderunit_register_read(core, MALI200_REG_ADDR_MGMT_STATUS) ));
-			break;
-#endif
 		default:
 			MALI_DEBUG_PRINT(1, ("Unknown reset type %d\n", style));
 	}
@@ -1212,8 +1208,8 @@ _mali_osk_errcode_t malipp_signal_power_down( u32 core_num, mali_bool immediate_
 #endif
 
 #if MALI_STATE_TRACKING
-void mali200_subsystem_dump_state(void)
+u32 mali200_subsystem_dump_state(char *buf, u32 size)
 {
-	mali_core_renderunit_dump_state(&subsystem_mali200);
+	return mali_core_renderunit_dump_state(&subsystem_mali200, buf, size);
 }
 #endif

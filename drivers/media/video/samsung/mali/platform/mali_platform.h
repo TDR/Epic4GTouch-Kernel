@@ -102,11 +102,3 @@ void mali_clk_put(void);
 u32 pmu_get_power_up_down_info(void);
 #endif
 #endif
-
-#if MALI_DVFS_ENABLED
-mali_bool init_mali_dvfs_staus(int step);
-void deinit_mali_dvfs_staus(void);
-mali_bool mali_dvfs_handler(u32 utilization);
-int mali_dvfs_is_running(void);
-void mali_dvfs_late_resume(void);
-#endif

@@ -1,5 +1,5 @@
-/*
- * Copyright (C) 2010 ARM Limited. All rights reserved.
+/**
+ * Copyright (C) 2010-2011 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -16,16 +16,13 @@
 #include <linux/fs.h>       /* file system operations */
 #include <linux/cdev.h>     /* character device definitions */
 #include <linux/mm.h> /* memory mananger definitions */
-#include <asm/uaccess.h>    /* user space access */
 #include <linux/device.h>
-#include <linux/proc_fs.h>
 
 /* the mali kernel subsystem types */
 #include "mali_kernel_subsystem.h"
 
 /* A memory subsystem always exists, so no need to conditionally include it */
 #include "mali_kernel_common.h"
-#include "mali_kernel_mem.h"
 #include "mali_kernel_session_manager.h"
 #include "mali_kernel_core.h"
 
@@ -36,6 +33,8 @@
 #include "mali_ukk_wrappers.h"
 #include "mali_kernel_pm.h"
 
+#include "mali_kernel_sysfs.h"
+
 /* */
 #include "mali_kernel_license.h"
 
@@ -45,11 +44,7 @@ module_param(mali_debug_level, int, S_IRUSR | S_IWUSR | S_IWGRP | S_IRGRP | S_IR
 MODULE_PARM_DESC(mali_debug_level, "Higher number, more dmesg output");
 
 /* By default the module uses any available major, but it's possible to set it at load time to a specific number */
-#if MALI_MAJOR_PREDEFINE
-int mali_major = 244;
-#else
 int mali_major = 0;
-#endif
 module_param(mali_major, int, S_IRUGO); /* r--r--r-- */
 MODULE_PARM_DESC(mali_major, "Device major number");
 
@@ -65,41 +60,16 @@ extern int mali_max_job_runtime;
 module_param(mali_max_job_runtime, int, S_IRUSR | S_IWUSR | S_IWGRP | S_IRGRP | S_IROTH);
 MODULE_PARM_DESC(mali_max_job_runtime, "Maximum allowed job runtime in msecs.\nJobs will be killed after this no matter what");
 
-#if MALI_DVFS_ENABLED
-extern int mali_dvfs_control;
-module_param(mali_dvfs_control, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP| S_IROTH); /* rw-rw-r-- */
-MODULE_PARM_DESC(mali_dvfs_control, "Mali Current DVFS");
+#if defined(USING_MALI400_L2_CACHE)
+extern int mali_l2_max_reads;
+module_param(mali_l2_max_reads, int, S_IRUSR | S_IRGRP | S_IROTH);
+MODULE_PARM_DESC(mali_l2_max_reads, "Maximum reads for Mali L2 cache");
 #endif
-
-extern int mali_gpu_clk;
-module_param(mali_gpu_clk, int, S_IRUSR | S_IRGRP | S_IROTH); /* r--r--r-- */
-MODULE_PARM_DESC(mali_gpu_clk, "Mali Current Clock");
-
-extern int mali_gpu_vol;
-module_param(mali_gpu_vol, int, S_IRUSR | S_IRGRP | S_IROTH); /* r--r--r-- */
-MODULE_PARM_DESC(mali_gpu_vol, "Mali Current Voltage");
-
-extern int gpu_power_state;
-module_param(gpu_power_state, int, S_IRUSR | S_IRGRP | S_IROTH); /* r--r--r-- */
-MODULE_PARM_DESC(gpu_power_state, "Mali Power State");
-
-struct mali_dev
-{
-	struct cdev cdev;
-#if MALI_LICENSE_IS_GPL
-	struct class *  mali_class;
-#endif
-};
 
 static char mali_dev_name[] = "mali"; /* should be const, but the functions we call requires non-cost */
 
 /* the mali device */
 static struct mali_dev device;
-
-#if MALI_STATE_TRACKING
-static struct proc_dir_entry *proc_entry;
-static int mali_proc_read(char *page, char **start, off_t off, int count, int *eof, void *data);
-#endif
 
 
 static int mali_open(struct inode *inode, struct file *filp);
@@ -141,39 +111,32 @@ int mali_driver_init(void)
 #endif
 #endif
 #endif
-    err = mali_kernel_constructor();
-    if (_MALI_OSK_ERR_OK != err)
-    {
-        MALI_PRINT(("Failed to initialize driver (error %d)\n", err));
-        return -EFAULT;
-    }
+	err = mali_kernel_constructor();
+	if (_MALI_OSK_ERR_OK != err)
+	{
+#if USING_MALI_PMM
+#if MALI_LICENSE_IS_GPL
+#ifdef CONFIG_PM
+		_mali_dev_platform_unregister();
+#endif
+#endif
+#endif
+		MALI_PRINT(("Failed to initialize driver (error %d)\n", err));
+		return -EFAULT;
+	}
 
     return 0;
 }
 
 void mali_driver_exit(void)
 {
+#if USING_MALI_PMM
+	malipmm_force_powerup();
+#endif
+	mali_kernel_destructor();
 
 #if USING_MALI_PMM
-#if MALI_LICENSE_IS_GPL
-#ifdef CONFIG_PM_RUNTIME
-#if MALI_PMM_RUNTIME_JOB_CONTROL_ON
-
-	_mali_osk_pmm_dev_activate();
-#endif
-#endif
-#endif
-#endif
-	 mali_kernel_destructor();
-
-#if USING_MALI_PMM
-#if MALI_LICENSE_IS_GPL
-#ifdef CONFIG_PM_RUNTIME
-#if MALI_PMM_RUNTIME_JOB_CONTROL_ON
-	_mali_osk_pmm_dev_idle();
-#endif
-#endif
-#endif
+	malipmm_force_powerdown();
 #endif
 
 #if USING_MALI_PMM
@@ -190,7 +153,6 @@ int initialize_kernel_device(void)
 {
 	int err;
 	dev_t dev = 0;
-
 	if (0 == mali_major)
 	{
 		/* auto select a major */
@@ -204,60 +166,39 @@ int initialize_kernel_device(void)
 		err = register_chrdev_region(dev, 1/*count*/, mali_dev_name);
 	}
 
-	if (0 == err)
+	if (err)
 	{
-		memset(&device, 0, sizeof(device));
-
-		/* initialize our char dev data */
-		cdev_init(&device.cdev, &mali_fops);
-		device.cdev.owner = THIS_MODULE;
-		device.cdev.ops = &mali_fops;
-
-		/* register char dev with the kernel */
-		err = cdev_add(&device.cdev, dev, 1/*count*/);
-
-		if (0 == err)
-		{
-#if MALI_STATE_TRACKING
-			proc_entry = create_proc_entry(mali_dev_name, 0444, NULL);
-			if (proc_entry != NULL)
-			{
-				proc_entry->read_proc = mali_proc_read;
-#endif
-#if MALI_LICENSE_IS_GPL
-				device.mali_class = class_create(THIS_MODULE, mali_dev_name);
-				if (IS_ERR(device.mali_class))
-				{
-					err = PTR_ERR(device.mali_class);
-				}
-				else
-				{
-					struct device * mdev;
-					mdev = device_create(device.mali_class, NULL, dev, NULL, mali_dev_name);
-					if (!IS_ERR(mdev))
-					{
-						return 0;
-					}
-
-					err = PTR_ERR(mdev);
-				}
-				cdev_del(&device.cdev);
-#else
-				return 0;
-#endif
-#if MALI_STATE_TRACKING
-				remove_proc_entry(mali_dev_name, NULL);
-			}
-			else
-			{
-				err = EFAULT;
-			}
-#endif
-		}
-		unregister_chrdev_region(dev, 1/*count*/);
+			goto init_chrdev_err;
 	}
 
+	memset(&device, 0, sizeof(device));
 
+	/* initialize our char dev data */
+	cdev_init(&device.cdev, &mali_fops);
+	device.cdev.owner = THIS_MODULE;
+	device.cdev.ops = &mali_fops;
+
+	/* register char dev with the kernel */
+	err = cdev_add(&device.cdev, dev, 1/*count*/);
+	if (err)
+	{
+			goto init_cdev_err;
+	}
+
+	err = mali_sysfs_register(&device, dev, mali_dev_name);
+	if (err)
+	{
+			goto init_sysfs_err;
+	}
+
+	/* Success! */
+	return 0;
+
+init_sysfs_err:
+	cdev_del(&device.cdev);
+init_cdev_err:
+	unregister_chrdev_region(dev, 1/*count*/);
+init_chrdev_err:
 	return err;
 }
 
@@ -266,14 +207,7 @@ void terminate_kernel_device(void)
 {
 	dev_t dev = MKDEV(mali_major, 0);
 	
-#if MALI_LICENSE_IS_GPL
-	device_destroy(device.mali_class, dev);
-	class_destroy(device.mali_class);
-#endif
-
-#if MALI_STATE_TRACKING
-	remove_proc_entry(mali_dev_name, NULL);
-#endif
+	mali_sysfs_unregister(&device, dev, mali_dev_name);
 
 	/* unregister char device */
 	cdev_del(&device.cdev);
@@ -387,7 +321,6 @@ static int mali_ioctl(struct inode *inode, struct file *filp, unsigned int cmd, 
 		return -ENOTTY;
 	}
 
-
     switch(cmd)
     {
         case MALI_IOC_GET_SYSTEM_INFO_SIZE:
@@ -478,7 +411,7 @@ static int mali_ioctl(struct inode *inode, struct file *filp, unsigned int cmd, 
 
 		case MALI_IOC_MEM_ATTACH_UMP:
 		case MALI_IOC_MEM_RELEASE_UMP: /* FALL-THROUGH */
-        	MALI_DEBUG_PRINT(2, ("UMP not supported\n", cmd, arg));
+        	MALI_DEBUG_PRINT(2, ("UMP not supported\n"));
             err = -ENOTTY;
 			break;
 #endif
@@ -519,6 +452,10 @@ static int mali_ioctl(struct inode *inode, struct file *filp, unsigned int cmd, 
             err = gp_suspend_response_wrapper(session_data, (_mali_uk_gp_suspend_response_s __user *)arg);
             break;
 
+		case MALI_IOC_VSYNC_EVENT_REPORT:
+		    err = vsync_event_report_wrapper(session_data, (_mali_uk_vsync_event_report_s __user *)arg);
+		    break;
+
         default:
         	MALI_DEBUG_PRINT(2, ("No handler for ioctl 0x%08X 0x%08lX\n", cmd, arg));
             err = -ENOTTY;
@@ -526,22 +463,6 @@ static int mali_ioctl(struct inode *inode, struct file *filp, unsigned int cmd, 
 
     return err;
 }
-
-#if MALI_STATE_TRACKING
-static int mali_proc_read(char *page, char **start, off_t off, int count, int *eof, void *data)
-{
-	MALI_DEBUG_PRINT(1, ("mali_proc_read(page=%p, start=%p, off=%u, count=%d, eof=%p, data=%p\n", page, start, off, count, eof, data));
-
-	/*
-	 * A more elegant solution would be to gather information from all subsystems and
-	 * then report it all in the /proc/mali file, but this would require a bit more work.
-	 * Use MALI_PRINT for now so we get the information in the dmesg log at least.
-	 */
-	_mali_kernel_core_dump_state();
-
-	return 0;	
-}
-#endif
 
 
 module_init(mali_driver_init);
