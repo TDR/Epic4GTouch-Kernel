@@ -6573,7 +6573,7 @@ struct gpio_keys_button c1_buttons[] = {
 		.wakeup = 1,
 #if !defined(CONFIG_TARGET_LOCALE_NA)
 	}, {
-		.code = KEY_HOME,
+		.code = KEY_HOMEPAGE,
 		.gpio = GPIO_OK_KEY,
 		.active_low = 1,
 		.type = EV_KEY,
