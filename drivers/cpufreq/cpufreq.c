@@ -663,11 +663,11 @@ static ssize_t store_UV_mV_table(struct cpufreq_policy *policy,
       unsigned int ret = -EINVAL;
       int i = 0;
       ret = sscanf(buf, "%d %d %d %d %d %d %d %d %d", &exp_UV_mV[0], &exp_UV_mV[1], &exp_UV_mV[2], &exp_UV_mV[3], &exp_UV_mV[4], &exp_UV_mV[5], &exp_UV_mV[6], &exp_UV_mV[7], &exp_UV_mV[8]);
-      if(ret != 7) {
+      if(ret != 9) {
               return -EINVAL;
       }
       else
-              for( i = 0; i < 7; i++ )
+              for( i = 0; i < 9; i++ )
               {
                  exp_UV_mV[i] *= 1000;
               }
