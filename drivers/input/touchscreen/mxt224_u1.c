@@ -156,6 +156,7 @@ static bool boot_or_resume = 1;/*1: boot_or_resume,0: others*/
 
 static int palm_chk_flag;
 static bool auto_cal_flag; /* 1: enabled,0: disabled*/
+static bool sleep_mode_flag = 0;
 
 #if defined(CONFIG_TARGET_LOCALE_NAATT)
 static bool gain_change_flag;
@@ -445,7 +446,6 @@ static void mxt224_ta_probe(int ta_status)
 		value = calcfg;
 		register_address = 2;
 		ret = get_object_info(copy_data, PROCG_NOISESUPPRESSION_T48, &size_one, &obj_address);
-	    size = size_one;
 		size_one = 1;
 		write_mem(copy_data, obj_address+(u16)register_address, size_one, &value);
 		read_mem(copy_data, obj_address+(u16)register_address, (u8)size_one, &val);
