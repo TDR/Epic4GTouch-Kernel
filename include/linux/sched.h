@@ -275,10 +275,7 @@ extern cpumask_var_t nohz_cpu_mask;
 extern void select_nohz_load_balancer(int stop_tick);
 extern int get_nohz_load_balancer(void);
 #else
-static inline void select_nohz_load_balancer(int stop_tick)
-{
-	return 0;
-}
+static inline void select_nohz_load_balancer(int stop_tick) { }
 #endif
 extern int get_nohz_timer_target(void);
 
@@ -857,7 +854,6 @@ struct sched_group {
 	 * single CPU.
 	 */
 	unsigned int cpu_power;
-	unsigned int group_weight;
 
 	/*
 	 * The CPUs this group covers.
@@ -1078,8 +1074,7 @@ struct sched_class {
 					 struct task_struct *task);
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
-	void (*task_move_group) (struct task_struct *p, int on_rq);
-	void (*prep_move_group) (struct task_struct *p, int on_rq);
+	void (*moved_group) (struct task_struct *p, int on_rq);
 #endif
 };
 

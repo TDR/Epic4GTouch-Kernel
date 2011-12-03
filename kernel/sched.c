@@ -495,7 +495,6 @@ struct rq {
 	struct mm_struct *prev_mm;
 
 	u64 clock;
-	u64 clock_task;
 
 	atomic_t nr_iowait;
 
@@ -521,10 +520,6 @@ struct rq {
 	u64 age_stamp;
 	u64 idle_stamp;
 	u64 avg_idle;
-#endif
-
-#ifdef CONFIG_IRQ_TIME_ACCOUNTING
-	u64 prev_irq_time;
 #endif
 
 	/* calc_load related fields */
@@ -650,21 +645,10 @@ static inline struct task_group *task_group(struct task_struct *p)
 
 #endif /* CONFIG_CGROUP_SCHED */
 
-static u64 irq_time_cpu(int cpu);
-static void sched_irq_time_avg_update(struct rq *rq, u64 irq_time);
-
 inline void update_rq_clock(struct rq *rq)
 {
-	int cpu = cpu_of(rq);
-	u64 irq_time;
-
 	if (!rq->skip_clock_update)
 		rq->clock = sched_clock_cpu(cpu_of(rq));
-	irq_time = irq_time_cpu(cpu);
-	if (rq->clock - irq_time > rq->clock_task)
-		rq->clock_task = rq->clock - irq_time;
-
-	sched_irq_time_avg_update(rq, irq_time);
 }
 
 /*
@@ -1861,94 +1845,6 @@ static const struct sched_class rt_sched_class;
 #define for_each_class(class) \
    for (class = sched_class_highest; class; class = class->next)
 
-#ifdef CONFIG_IRQ_TIME_ACCOUNTING
-
-/*
- * There are no locks covering percpu hardirq/softirq time.
- * They are only modified in account_system_vtime, on corresponding CPU
- * with interrupts disabled. So, writes are safe.
- * They are read and saved off onto struct rq in update_rq_clock().
- * This may result in other CPU reading this CPU's irq time and can
- * race with irq/account_system_vtime on this CPU. We would either get old
- * or new value (or semi updated value on 32 bit) with a side effect of
- * accounting a slice of irq time to wrong task when irq is in progress
- * while we read rq->clock. That is a worthy compromise in place of having
- * locks on each irq in account_system_time.
- */
-static DEFINE_PER_CPU(u64, cpu_hardirq_time);
-static DEFINE_PER_CPU(u64, cpu_softirq_time);
-
-static DEFINE_PER_CPU(u64, irq_start_time);
-static int sched_clock_irqtime;
-
-void enable_sched_clock_irqtime(void)
-{
-	sched_clock_irqtime = 1;
-}
-
-void disable_sched_clock_irqtime(void)
-{
-	sched_clock_irqtime = 0;
-}
-
-static u64 irq_time_cpu(int cpu)
-{
-	if (!sched_clock_irqtime)
-		return 0;
-
-	return per_cpu(cpu_softirq_time, cpu) + per_cpu(cpu_hardirq_time, cpu);
-}
-
-void account_system_vtime(struct task_struct *curr)
-{
-	unsigned long flags;
-	int cpu;
-	u64 now, delta;
-
-	if (!sched_clock_irqtime)
-		return;
-
-	local_irq_save(flags);
-
-	cpu = smp_processor_id();
-	now = sched_clock_cpu(cpu);
-	delta = now - per_cpu(irq_start_time, cpu);
-	per_cpu(irq_start_time, cpu) = now;
-	/*
-	 * We do not account for softirq time from ksoftirqd here.
-	 * We want to continue accounting softirq time to ksoftirqd thread
-	 * in that case, so as not to confuse scheduler with a special task
-	 * that do not consume any time, but still wants to run.
-	 */
-	if (hardirq_count())
-		per_cpu(cpu_hardirq_time, cpu) += delta;
-	else if (in_serving_softirq() && !(curr->flags & PF_KSOFTIRQD))
-		per_cpu(cpu_softirq_time, cpu) += delta;
-
-	local_irq_restore(flags);
-}
-EXPORT_SYMBOL_GPL(account_system_vtime);
-
-static void sched_irq_time_avg_update(struct rq *rq, u64 curr_irq_time)
-{
-	if (sched_clock_irqtime && sched_feat(NONIRQ_POWER)) {
-		u64 delta_irq = curr_irq_time - rq->prev_irq_time;
-		rq->prev_irq_time = curr_irq_time;
-		sched_rt_avg_update(rq, delta_irq);
-	}
-}
-
-#else
-
-static u64 irq_time_cpu(int cpu)
-{
-	return 0;
-}
-
-static void sched_irq_time_avg_update(struct rq *rq, u64 curr_irq_time) { }
-
-#endif
-
 #include "sched_stats.h"
 
 static void inc_nr_running(struct rq *rq)
@@ -2102,9 +1998,6 @@ task_hot(struct task_struct *p, u64 now, struct sched_domain *sd)
 	if (p->sched_class != &fair_sched_class)
 		return 0;
 
-	if (unlikely(p->policy == SCHED_IDLE))
-		return 0;
-
 	/*
 	 * Buddy candidates are cache hot:
 	 */
@@ -2184,7 +2077,7 @@ static bool migrate_task(struct task_struct *p, int dest_cpu)
  */
 unsigned long wait_task_inactive(struct task_struct *p, long match_state)
 {
-	unsigned long flags = 0;
+	unsigned long flags;
 	int running, on_rq;
 	unsigned long ncsw;
 	struct rq *rq;
@@ -2405,7 +2298,7 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 			  int wake_flags)
 {
 	int cpu, orig_cpu, this_cpu, success = 0;
-	unsigned long flags = 0;
+	unsigned long flags;
 	unsigned long en_flags = ENQUEUE_WAKEUP;
 	struct rq *rq;
 
@@ -2650,7 +2543,7 @@ void sched_fork(struct task_struct *p, int clone_flags)
  */
 void wake_up_new_task(struct task_struct *p, unsigned long clone_flags)
 {
-	unsigned long flags = 0;
+	unsigned long flags;
 	struct rq *rq;
 	int cpu __maybe_unused = get_cpu();
 
@@ -3367,6 +3260,8 @@ static void update_cpu_load(struct rq *this_rq)
 
 		this_rq->cpu_load[i] = (old_load * (scale - 1) + new_load) >> i;
 	}
+
+	sched_avg_update(this_rq);
 }
 
 static void update_cpu_load_active(struct rq *this_rq)
@@ -3374,8 +3269,6 @@ static void update_cpu_load_active(struct rq *this_rq)
 	update_cpu_load(this_rq);
 
 	calc_load_account_active(this_rq);
-
-	sched_avg_update(this_rq);
 }
 
 #ifdef CONFIG_SMP
@@ -3429,7 +3322,7 @@ static u64 do_task_delta_exec(struct task_struct *p, struct rq *rq)
 
 	if (task_current(rq, p)) {
 		update_rq_clock(rq);
-		ns = rq->clock_task - p->se.exec_start;
+		ns = rq->clock - p->se.exec_start;
 		if ((s64)ns < 0)
 			ns = 0;
 	}
@@ -3439,7 +3332,7 @@ static u64 do_task_delta_exec(struct task_struct *p, struct rq *rq)
 
 unsigned long long task_delta_exec(struct task_struct *p)
 {
-	unsigned long flags = 0;
+	unsigned long flags;
 	struct rq *rq;
 	u64 ns = 0;
 
@@ -3457,7 +3350,7 @@ unsigned long long task_delta_exec(struct task_struct *p)
  */
 unsigned long long task_sched_runtime(struct task_struct *p)
 {
-	unsigned long flags = 0;
+	unsigned long flags;
 	struct rq *rq;
 	u64 ns = 0;
 
@@ -3480,7 +3373,7 @@ unsigned long long task_sched_runtime(struct task_struct *p)
 unsigned long long thread_group_sched_runtime(struct task_struct *p)
 {
 	struct task_cputime totals;
-	unsigned long flags = 0;
+	unsigned long flags;
 	struct rq *rq;
 	u64 ns;
 
@@ -3578,7 +3471,7 @@ void account_system_time(struct task_struct *p, int hardirq_offset,
 	tmp = cputime_to_cputime64(cputime);
 	if (hardirq_count() - hardirq_offset)
 		cpustat->irq = cputime64_add(cpustat->irq, tmp);
-	else if (in_serving_softirq())
+	else if (softirq_count())
 		cpustat->softirq = cputime64_add(cpustat->softirq, tmp);
 	else
 		cpustat->system = cputime64_add(cpustat->system, tmp);
@@ -4518,7 +4411,7 @@ EXPORT_SYMBOL(sleep_on_timeout);
  */
 void rt_mutex_setprio(struct task_struct *p, int prio)
 {
-	unsigned long flags = 0;
+	unsigned long flags;
 	int oldprio, on_rq, running;
 	struct rq *rq;
 	const struct sched_class *prev_class;
@@ -4558,7 +4451,7 @@ void rt_mutex_setprio(struct task_struct *p, int prio)
 void set_user_nice(struct task_struct *p, long nice)
 {
 	int old_prio, delta, on_rq;
-	unsigned long flags = 0;
+	unsigned long flags;
 	struct rq *rq;
 
 	if (TASK_NICE(p) == nice || nice < -20 || nice > 19)
@@ -5127,7 +5020,7 @@ SYSCALL_DEFINE3(sched_setaffinity, pid_t, pid, unsigned int, len,
 long sched_getaffinity(pid_t pid, struct cpumask *mask)
 {
 	struct task_struct *p;
-	unsigned long flags = 0;
+	unsigned long flags;
 	struct rq *rq;
 	int retval;
 
@@ -5387,7 +5280,7 @@ SYSCALL_DEFINE2(sched_rr_get_interval, pid_t, pid,
 {
 	struct task_struct *p;
 	unsigned int time_slice;
-	unsigned long flags = 0;
+	unsigned long flags;
 	struct rq *rq;
 	int retval;
 	struct timespec t;
@@ -5540,7 +5433,7 @@ void __cpuinit init_idle(struct task_struct *idle, int cpu)
 	 * The idle tasks have their own, simple scheduling class:
 	 */
 	idle->sched_class = &idle_sched_class;
-	ftrace_graph_init_idle_task(idle, cpu);
+	ftrace_graph_init_task(idle);
 }
 
 /*
@@ -6980,8 +6873,6 @@ static void init_sched_groups_power(int cpu, struct sched_domain *sd)
 	if (cpu != group_first_cpu(sd->groups))
 		return;
 
-	sd->groups->group_weight = cpumask_weight(sched_group_cpus(sd->groups));
-
 	child = sd->child;
 
 	sd->groups->cpu_power = 0;
@@ -8094,6 +7985,7 @@ int __init __might_sleep_init(void)
 }
 early_initcall(__might_sleep_init);
 
+
 void __might_sleep(const char *file, int line, int preempt_offset)
 {
 #ifdef in_atomic
@@ -8490,7 +8382,7 @@ void sched_destroy_group(struct task_group *tg)
 void sched_move_task(struct task_struct *tsk)
 {
 	int on_rq, running;
-	unsigned long flags = 0;
+	unsigned long flags;
 	struct rq *rq;
 
 	rq = task_rq_lock(tsk, &flags);
@@ -8503,12 +8395,12 @@ void sched_move_task(struct task_struct *tsk)
 	if (unlikely(running))
 		tsk->sched_class->put_prev_task(rq, tsk);
 
+	set_task_rq(tsk, task_cpu(tsk));
+
 #ifdef CONFIG_FAIR_GROUP_SCHED
-	if (tsk->sched_class->task_move_group)
-		tsk->sched_class->task_move_group(tsk, on_rq);
-	else
+	if (tsk->sched_class->moved_group)
+		tsk->sched_class->moved_group(tsk, on_rq);
 #endif
-		set_task_rq(tsk, task_cpu(tsk));
 
 	if (unlikely(running))
 		tsk->sched_class->set_curr_task(rq);
