@@ -64,18 +64,20 @@ static struct mutex set_speed_lock;
 static unsigned long go_maxspeed_load;
 
 /* Base of exponential raise to max speed; if 0 - jump to maximum */
+#define DEFAULT_BOOST_FACTOR 0
 static unsigned long boost_factor;
 
 /*
  * Targeted sustainable load relatively to current frequency.
  * If 0, target is set realtively to the max speed
  */
+#define DEFAULT_SUSTAIN_LOAD 100
 static unsigned long sustain_load;
 
 /*
  * The minimum amount of time to spend at a frequency before we can ramp down.
  */
-#define DEFAULT_MIN_SAMPLE_TIME 50000;
+#define DEFAULT_MIN_SAMPLE_TIME 25000;
 static unsigned long min_sample_time;
 
 #define DEBUG 0
@@ -743,6 +745,8 @@ static int __init cpufreq_interactive_init(void)
 
 	go_maxspeed_load = DEFAULT_GO_MAXSPEED_LOAD;
 	min_sample_time = DEFAULT_MIN_SAMPLE_TIME;
+	boost_factor = DEFAULT_BOOST_FACTOR;
+	sustain_load = DEFAULT_SUSTAIN_LOAD;
 
 	/* Initalize per-cpu timers */
 	for_each_possible_cpu(i) {
