@@ -674,7 +674,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	/* if we are already at full speed then break out early */
 	if (!dbs_tuners_ins.powersave_bias) {
 	    if (policy->cur == policy->max)
-		return;
+			return;
 
 	    __cpufreq_driver_target(policy, policy->max,
 				    CPUFREQ_RELATION_H);
@@ -727,8 +727,13 @@ static void do_dbs_timer(struct work_struct *work)
     struct cpu_dbs_info_s *dbs_info =
 	container_of(work, struct cpu_dbs_info_s, work.work);
     unsigned int cpu = dbs_info->cpu;
-    int delay;
     int sample_type = dbs_info->sample_type;
+
+	/* We want all CPUs to do sampling nearly on same jiffy */
+	int delay = usecs_to_jiffies(current_sampling_rate);
+
+	if (num_online_cpus() > 1)
+		delay -= jiffies % delay;
 
     mutex_lock(&dbs_info->timer_mutex);
 
@@ -736,22 +741,15 @@ static void do_dbs_timer(struct work_struct *work)
     dbs_info->sample_type = DBS_NORMAL_SAMPLE;
     if (!dbs_tuners_ins.powersave_bias ||
 	sample_type == DBS_NORMAL_SAMPLE) {
-	dbs_check_cpu(dbs_info);
-	if (dbs_info->freq_lo) {
-	    /* Setup timer for SUB_SAMPLE */
-	    dbs_info->sample_type = DBS_SUB_SAMPLE;
-	    delay = dbs_info->freq_hi_jiffies;
-	} else {
-	    delay = usecs_to_jiffies(current_sampling_rate);
-	    if (num_online_cpus() > 1)
-		delay -= jiffies % delay;
-	}
+		dbs_check_cpu(dbs_info);
+		if (dbs_info->freq_lo) {
+			/* Setup timer for SUB_SAMPLE */
+			dbs_info->sample_type = DBS_SUB_SAMPLE;
+			delay = dbs_info->freq_hi_jiffies;
+		}
     } else {
-	__cpufreq_driver_target(dbs_info->cur_policy,
-				dbs_info->freq_lo, CPUFREQ_RELATION_H);
-	delay = usecs_to_jiffies(current_sampling_rate);
-	if (num_online_cpus() > 1)
-	    delay -= jiffies % delay;
+		__cpufreq_driver_target(dbs_info->cur_policy,
+			dbs_info->freq_lo, CPUFREQ_RELATION_H);
     }
     queue_delayed_work_on(cpu, klazy_wq, &dbs_info->work, delay);
     mutex_unlock(&dbs_info->timer_mutex);
@@ -760,8 +758,7 @@ static void do_dbs_timer(struct work_struct *work)
 static inline void dbs_timer_init(struct cpu_dbs_info_s *dbs_info)
 {
     /* We want all CPUs to do sampling nearly on same jiffy */
-    int delay = usecs_to_jiffies(current_sampling_rate);
-    delay -= jiffies % delay;
+    int delay = usecs_to_jiffies(40 * 1000000);
 
     dbs_info->sample_type = DBS_NORMAL_SAMPLE;
     INIT_DELAYED_WORK_DEFERRABLE(&dbs_info->work, do_dbs_timer);
@@ -904,22 +901,9 @@ static int __init cpufreq_gov_dbs_init(void)
 
     idle_time = get_cpu_idle_time_us(cpu, &wall);
     put_cpu();
-    if (idle_time != -1ULL) {
-	/* Idle micro accounting is supported. Use finer thresholds */
-	dbs_tuners_ins.up_threshold = MICRO_FREQUENCY_UP_THRESHOLD;
-	dbs_tuners_ins.down_differential =
-	    MICRO_FREQUENCY_DOWN_DIFFERENTIAL;
-	/*
-	 * In no_hz/micro accounting case we set the minimum frequency
-	 * not depending on HZ, but fixed (very low). The deferred
-	 * timer might skip some samples if idle/sleeping as needed.
-	 */
-	min_sampling_rate = MICRO_FREQUENCY_MIN_SAMPLE_RATE;
-    } else {
-	/* For correct statistics, we need 10 ticks for each measure */
+	/* For correct statistics, we need 8(?) ticks for each measure */
 	min_sampling_rate =
-	    MIN_SAMPLING_RATE_RATIO * jiffies_to_usecs(10);
-    }
+		MIN_SAMPLING_RATE_RATIO * jiffies_to_usecs(8);
 
     klazy_wq = create_workqueue("klazy");
     if (!klazy_wq) {
