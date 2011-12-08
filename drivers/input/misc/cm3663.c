@@ -74,12 +74,21 @@ static u8 reg_defaults[8] = {
 	0x0A, /* PS_THD: 10 */
 };
 
+#if defined(CONFIG_MACH_C1_NA_SPR_REV05)
+static const int adc_table[4] = {
+	18,
+	173,
+	1737,
+	16792,
+};
+#else
 static const int adc_table[4] = {
 	15,
 	150,
 	1500,
 	15000,
 };
+#endif
 
 enum {
 	LIGHT_ENABLED = BIT(0),
