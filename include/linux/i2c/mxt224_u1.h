@@ -165,4 +165,25 @@ typedef enum
     QT_CTE_MODE        = 0x31
 }diagnostic_debug_command;
 
+typedef enum
+{
+	ERR_RTN_CONDITION_T9,
+	ERR_RTN_CONDITION_T48,
+	ERR_RTN_CONDITION_IDLE,
+	ERR_RTN_CONDITION_MAX
+}ERR_RTN_CONTIOIN;
+
+//Gumi modify
+typedef struct
+{
+ bool mferr_setting;
+ u8 mferr_count;
+ u8 t46_actvsyncsperx_for_mferr;
+ u8 t48_mfinvlddiffthr_for_mferr;
+ u8 t48_mferrorthr_for_mferr;
+ u8 t48_thr_for_mferr;
+ u8 t48_movfilter_for_mferr;
+}__packed t48_median_config_t;
+
+
 #endif

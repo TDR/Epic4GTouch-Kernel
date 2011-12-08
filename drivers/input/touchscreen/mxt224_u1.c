@@ -91,7 +91,7 @@
 
 #define MXT224_AUTOCAL_WAIT_TIME		2000
 
-#define T48_CALCFG_TA     0x50
+#define T48_CALCFG_TA     0x52
 #define	T48_CALCFG                0x40
 
 
@@ -165,6 +165,9 @@ static int palm_chk_flag;
 static bool auto_cal_flag; /* 1: enabled,0: disabled*/
 static bool ta_status_pre = 0;
 static bool sleep_mode_flag = 0;
+ERR_RTN_CONTIOIN gErrCondition = ERR_RTN_CONDITION_IDLE;
+t48_median_config_t noise_median = {0}; //Gumi modify
+
 
 #if defined(CONFIG_TARGET_LOCALE_NAATT)
 static bool gain_change_flag;
@@ -180,6 +183,7 @@ static unsigned char is_inputmethod;
 static bool suspend_ta_status;
 #endif
 
+static bool median_err_flag = 0;
 static void mxt224_optical_gain(uint16_t dbg_mode);
 
 static int read_mem(struct mxt224_data *data, u16 reg, u8 len, u8 *buf)
@@ -448,6 +452,7 @@ static void mxt224_ta_probe(int ta_status)
 		noise_threshold = 40;
 		movfilter = 46;
 		blen = 16;
+		gErrCondition =  ERR_RTN_CONDITION_MAX;
 	} else {
 	    if (boot_or_resume==1)
 			threshold = 55;
@@ -460,9 +465,49 @@ static void mxt224_ta_probe(int ta_status)
 		noise_threshold = 30;
 		movfilter = 11;
 		blen = 32;
+		gErrCondition =  ERR_RTN_CONDITION_IDLE;
+		noise_median.mferr_count=0;
+		noise_median.mferr_setting = false;
+
+		
 	}
 
 	if (copy_data->family_id==0x81) {
+		if((!ta_status)&&(median_err_flag==1))
+		{
+			ret = get_object_info(copy_data, TOUCH_MULTITOUCHSCREEN_T9, &size_one, &obj_address);
+			size_one = 1;
+			//blen
+			value = 32;
+			register_address=6;
+			write_mem(copy_data, obj_address+(u16)register_address, size_one, &value);
+			//threshold
+			value = 50;
+			register_address=7;
+			write_mem(copy_data, obj_address+(u16)register_address, size_one, &value);
+			// move Filter
+			value = 46;
+			register_address=13;
+			write_mem(copy_data, obj_address+(u16)register_address, size_one, &value);
+			median_err_flag = 0;
+			printk(KERN_ERR"[TSP]backup T9 settings caused by median err\n");
+		}
+		
+		ret = get_object_info(copy_data, SPT_CTECONFIG_T46, &size_one, &obj_address);
+		value=40;
+		write_mem(copy_data, obj_address+3, 1, &value);
+
+		
+		ret = get_object_info(copy_data, GEN_ACQUISITIONCONFIG_T8, &size_one, &obj_address);
+		register_address=0;
+		size_one = 1;
+		if (ta_status)
+			value = 22;
+		else
+			value = 27;
+		write_mem(copy_data, obj_address+(u16)register_address, size_one, &value);
+		read_mem(copy_data, obj_address+(u16)register_address, (u8)size_one, &val);
+		printk(KERN_ERR"[TSP]TA_probe MXT224E T%d Byte%d is %d\n",8,register_address,val);
 		/*ret = get_object_info(copy_data, TOUCH_MULTITOUCHSCREEN_T9, &size_one, &obj_address);
 		size_one = 1;
 		value = (u8)threshold_e;
@@ -1169,13 +1214,6 @@ static void report_input_data(struct mxt224_data *data)
 			printk(KERN_ERR "[TSP] Dn[%d] %4d,%4d\n", i, data->fingers[i].x, data->fingers[i].y);
 		*/
 #endif
-#ifdef CONFIG_TARGET_LOCALE_NA
-		if (touch_is_pressed_arr[i]==0)
-			printk(KERN_ERR "[TSP] Up[%d] %4d,%4d\n", i, data->fingers[i].x, data->fingers[i].y);
-		else if (touch_is_pressed_arr[i]==1)
-			printk(KERN_ERR "[TSP] Dn[%d] %4d,%4d\n", i, data->fingers[i].x, data->fingers[i].y);
-
-#endif
 
 		if (data->fingers[i].z == 0)
 			data->fingers[i].z = -1;
@@ -1250,6 +1288,88 @@ void palm_recovery(void)
 	}
 }
 
+ERR_RTN_CONTIOIN Check_Err_Condition(int ta)
+{
+	ERR_RTN_CONTIOIN rtn;
+
+	if(ta)
+	{
+		rtn = ERR_RTN_CONDITION_MAX;
+	}
+	else
+	{
+		switch(gErrCondition)
+		{
+			case ERR_RTN_CONDITION_IDLE:
+				rtn = ERR_RTN_CONDITION_T9;
+				break;
+
+			case ERR_RTN_CONDITION_T9:
+				rtn = ERR_RTN_CONDITION_T48;
+				break;
+
+			case ERR_RTN_CONDITION_T48:
+				rtn = ERR_RTN_CONDITION_IDLE;
+				break;
+		}
+	}
+	return rtn;
+}
+
+//Gumi modify
+static int median_err_setting(int state)
+{
+	u16 obj_address;
+	u8 size_one;
+	u8 value;
+	u8 mf;
+
+	get_object_info(copy_data, SPT_USERDATA_T38, &size_one, &obj_address);
+	read_mem(copy_data, obj_address+2, 1, & noise_median.t48_mfinvlddiffthr_for_mferr);
+	printk(KERN_ERR"[TSP]mfinvlddiffthr value is %d\n", noise_median.t48_mfinvlddiffthr_for_mferr);
+	read_mem(copy_data, obj_address+3, 1, & noise_median.t48_mferrorthr_for_mferr);
+	printk(KERN_ERR"[TSP]mferrorthr value is %d\n",noise_median.t48_mferrorthr_for_mferr);
+	read_mem(copy_data, obj_address+4, 1, &noise_median.t46_actvsyncsperx_for_mferr);
+	printk(KERN_ERR"[TSP]actvsyncsperx value is %d\n",noise_median.t46_actvsyncsperx_for_mferr);
+
+	get_object_info(copy_data, PROCG_NOISESUPPRESSION_T48, &size_one, &obj_address);
+	
+	if(state == 1)
+	{
+		value = noise_median.t48_mfinvlddiffthr_for_mferr;
+		write_mem(copy_data, obj_address+22, 1, &value);
+		value = noise_median.t48_mferrorthr_for_mferr; 
+		write_mem(copy_data, obj_address+25, 1, &value);
+		value = noise_median.t48_thr_for_mferr;
+		write_mem(copy_data, obj_address+35, 1, &value);
+		value = noise_median.t48_movfilter_for_mferr;
+		write_mem(copy_data, obj_address+39, 1, &value);
+		get_object_info(copy_data, SPT_CTECONFIG_T46, &size_one, &obj_address);
+		value = noise_median.t46_actvsyncsperx_for_mferr;
+		write_mem(copy_data, obj_address+3, 1, &value);	}
+	else if(state >= 2)
+	{
+		value = 10;
+		write_mem(copy_data, obj_address+3, 1, &value);
+		value = 0;
+		write_mem(copy_data, obj_address+8, 1, &value);
+		value = 0;
+		write_mem(copy_data, obj_address+9, 1, &value);
+		value = 20;
+		write_mem(copy_data, obj_address+22, 1, &value);
+		value = 38;
+		write_mem(copy_data, obj_address+25, 1, &value);
+		value = 45;
+		write_mem(copy_data, obj_address+35, 1, &value);
+		value = 65;
+		write_mem(copy_data, obj_address+39, 1, &value);
+		get_object_info(copy_data, SPT_CTECONFIG_T46, &size_one, &obj_address);
+		value =63;
+		write_mem(copy_data, obj_address+3, 1, &value);
+	}
+	noise_median.mferr_setting = true;
+}
+
 
 static irqreturn_t mxt224_irq_thread(int irq, void *ptr)
 {
@@ -1260,6 +1380,8 @@ static irqreturn_t mxt224_irq_thread(int irq, void *ptr)
 	u8 value, size_one,ret;
 	u16 obj_address = 0;
 	unsigned int register_address = 0;
+	int ta_status_check;
+
 
     if(palm_chk_flag == 2) {
 		palm_recovery();
@@ -1311,18 +1433,110 @@ static irqreturn_t mxt224_irq_thread(int irq, void *ptr)
 				calibrate_chip();
 		}
 		if((msg[0] == 18) && (data->family_id==0x81)){
+			printk(KERN_ERR"[TSP] Starting irq with 0x%2x, 0x%2x, 0x%2x, 0x%2x, 0x%2x, 0x%2x, 0x%2x, 0x%2x", msg[0], msg[1], msg[2], msg[3], msg[4], msg[5], msg[6], msg[7]);
 			if((msg[4]&0x5) == 0x5){
-				printk(KERN_ERR"[TSP] median filter state error!!!\n");
-				register_address=2;
-				ret = get_object_info(data, PROCG_NOISESUPPRESSION_T48, &size_one, &obj_address);
-				size_one = 1;
-				read_mem(data, obj_address+(u16)register_address, size_one, &value);
-				printk(KERN_ERR"[TSP]TA_probe MXT224E T%d Byte%d is %d\n",48,register_address,value);
-				value = value & 0xDF;
-				write_mem(data, obj_address+(u16)register_address, size_one, &value);
-				mdelay(5);
-				value = value | 0x20;
-				write_mem(data, obj_address+(u16)register_address, size_one, &value);
+				copy_data->read_ta_status(&ta_status_check);
+				printk(KERN_ERR"[TSP] median filter state error  ta_status_check = %d!!!\n", ta_status_check);
+
+				if(!ta_status_check)
+				{
+					gErrCondition = Check_Err_Condition(ta_status_check);
+						
+					switch(gErrCondition)
+					{
+						case ERR_RTN_CONDITION_T9:
+						{
+							//t9
+							ret = get_object_info(data, TOUCH_MULTITOUCHSCREEN_T9, &size_one, &obj_address);
+							size_one = 1;
+							//blen
+							value = 16;
+							register_address=6;
+							write_mem(data, obj_address+(u16)register_address, size_one, &value);
+						
+							//threshold
+							value = 40;
+							register_address=7;
+							write_mem(data, obj_address+(u16)register_address, size_one, &value);
+						
+						
+							// move Filter
+							value = 47;
+							register_address=13;
+							write_mem(data, obj_address+(u16)register_address, size_one, &value);
+
+							median_err_flag = 1;
+						}
+							break;
+
+						case ERR_RTN_CONDITION_T48:
+						{
+							// t48
+							ret = get_object_info(data, PROCG_NOISESUPPRESSION_T48, &size_one, &obj_address);
+							size_one = 1;
+
+							// Base Frq modify
+							register_address=3; 
+							value = 29;
+							write_mem(data, obj_address+(u16)register_address, size_one, &value);	
+						}
+							break;
+					
+						case ERR_RTN_CONDITION_IDLE:
+						{
+							// t9
+							ret = get_object_info(data, TOUCH_MULTITOUCHSCREEN_T9, &size_one, &obj_address);
+							//blen INIT
+							value = 32;
+							register_address=6;
+							write_mem(data, obj_address+(u16)register_address, 1, &value);
+							//threshold INIT
+							value = 50;
+							register_address=7;
+							write_mem(data, obj_address+(u16)register_address, 1, &value);
+							// move Filter INIT
+							value = 46;
+							register_address=13;
+							write_mem(data, obj_address+(u16)register_address, 1, &value);
+
+							// t48
+							ret = get_object_info(data, PROCG_NOISESUPPRESSION_T48, &size_one, &obj_address);
+							// Base Frq modify INIT
+							register_address=3; 
+							value = 0;
+							write_mem(data, obj_address+(u16)register_address, 1, &value);	
+						}
+						break;
+					}
+
+					// t48
+					register_address=2;
+					ret = get_object_info(data, PROCG_NOISESUPPRESSION_T48, &size_one, &obj_address);
+					size_one = 1;
+					read_mem(data, obj_address+(u16)register_address, size_one, &value);
+					printk(KERN_ERR"[TSP]TA_probe MXT224E T%d Byte%d is %d\n",48,register_address,value);
+					value = value & 0xDF;
+					write_mem(data, obj_address+(u16)register_address, size_one, &value);
+					mdelay(5);
+					value = value | 0x20;
+					write_mem(data, obj_address+(u16)register_address, size_one, &value);
+				}
+				else
+				{
+					get_object_info(data, SPT_USERDATA_T38, &size_one, &obj_address);
+					read_mem(data, obj_address+1, 1, &value);
+					printk(KERN_ERR"[TSP]info value is %d\n",value);
+
+					if(noise_median.mferr_count < 3)
+						noise_median.mferr_count++;
+
+					if(!(noise_median.mferr_count%value)&&(noise_median.mferr_count < 3))
+					{
+						printk(KERN_DEBUG"[TSP] median thr noise level too high. %d\n", noise_median.mferr_count/value);
+						median_err_setting(noise_median.mferr_count/value);
+					}
+				
+				}
 
 			}
 		}
@@ -1500,6 +1714,8 @@ static int mxt224_internal_resume(struct mxt224_data *data)
 #ifdef CONFIG_TARGET_LOCALE_NA
 	}
 #endif /* CONFIG_TARGET_LOCALE_NA */
+	noise_median.mferr_count=0;
+	noise_median.mferr_setting = false;
 	return ret;
 }
 
@@ -3254,6 +3470,17 @@ if (device_create_file(sec_touchscreen, &dev_attr_mxt_touchtype) < 0)
 	data->early_suspend.resume = mxt224_late_resume;
 	register_early_suspend(&data->early_suspend);
 #endif
+
+
+
+//110926 zero charger & palne noise apply
+	  noise_median.mferr_setting = false;
+	  noise_median.mferr_count = 0;
+	  noise_median.t46_actvsyncsperx_for_mferr = 63;
+	  noise_median.t48_mfinvlddiffthr_for_mferr = 13;
+	  noise_median.t48_mferrorthr_for_mferr = 19;
+	  noise_median.t48_thr_for_mferr = 40;
+	  noise_median.t48_movfilter_for_mferr = 0;
 
 	return 0;
 
