@@ -3687,7 +3687,7 @@ static u8 t9_config_e[] = {TOUCH_MULTITOUCHSCREEN_T9,
 				10,		/* MOVHYSTI */
 				1, 46, MXT224_MAX_MT_FINGERS, 5, 40, 10, 31, 3,
 				223, 1, 10, 10, 10, 10, 143, 40, 143, 80,
-				18, 15, 50, 50, 2};
+				18, 15, 50, 50, 0};
 
 #else
 static u8 t9_config_e[] = {TOUCH_MULTITOUCHSCREEN_T9,
@@ -3717,6 +3717,8 @@ static u8 t23_config_e[] = {TOUCH_PROXIMITY_T23,
 static u8 t25_config_e[] = {SPT_SELFTEST_T25,
 				0, 0, 0, 0, 0, 0, 0, 0};
 
+static u8 t38_config_e[] = {SPT_USERDATA_T38,
+				0,1,14,23,44,0,0,0};
 static u8 t40_config_e[] = {PROCI_GRIPSUPPRESSION_T40,
 				0, 0, 0, 0, 0};
 
@@ -3725,7 +3727,7 @@ static u8 t42_config_e[] = {PROCI_TOUCHSUPPRESSION_T42,
 
 #ifdef CONFIG_TARGET_LOCALE_NA
 static u8 t46_config_e[] = {SPT_CTECONFIG_T46,
-				0, 3, 16, 45, 0, 0, 1, 0, 0};
+				0, 3, 16, 40, 0, 0, 1, 0, 0};
 #else
 static u8 t46_config_e[] = {SPT_CTECONFIG_T46,
 				0, 3, 16, 48, 0, 0, 1, 0, 0};
@@ -3736,23 +3738,23 @@ static u8 t47_config_e[] = {PROCI_STYLUS_T47,
 #if 1 /*MXT224E_0V5_CONFIG */
 #ifdef CONFIG_TARGET_LOCALE_NA
 static u8 t48_config_e_ta[] = {PROCG_NOISESUPPRESSION_T48,
-				1, 4, 0x50, 0, 0, 0, 0, 0, 0, 0,
-				0, 0, 0, 6, 6, 0, 0, 100, 4, 64,
-				10, 0, 20, 5, 0, 38, 0, 20, 0, 0,
+				3, 132, 0x52, 0, 0, 0, 0, 0, 10, 15,
+				0, 0, 0, 6, 6, 0, 0, 64, 4, 64,
+				10, 0, 9, 5, 0, 15, 0, 20, 0, 0,
 				0, 0, 0, 0, 0, 40, 2,/*blen=0,threshold=50*/
 				10,		/* MOVHYSTI */
-				1, 15,
+				1, 47,
 				10, 5, 40, 240, 245, 10, 10, 148, 50, 143,
-				80, 18, 10, 2};
+				80, 18, 10, 0};
 static u8 t48_config_e[] = {PROCG_NOISESUPPRESSION_T48,
-				1, 4, 0x40, 0, 0, 0, 0, 0, 0, 0,
-				0, 0, 0, 6, 6, 0, 0, 100, 4, 64,
+				3, 132, 0x40, 0, 0, 0, 0, 0, 10, 15,
+				0, 0, 0, 6, 6, 0, 0, 64, 4, 64,
 				10, 0, 20, 5, 0, 38, 0, 5, 0, 0,  /*byte 27 original value 20*/
 				0, 0, 0, 0, 32, 50, 2,
 				10,
 				1, 46,
 				MXT224_MAX_MT_FINGERS, 5, 40, 10, 0, 10, 10, 143, 40, 143,
-				80, 18, 15, 2};
+				80, 18, 15, 0};
 #else
 static u8 t48_config_e_ta[] = {PROCG_NOISESUPPRESSION_T48,
 				1, 4, 0x50, 0, 0, 0, 0, 0, 0, 0,
@@ -3791,6 +3793,7 @@ static const u8 *mxt224e_config[] = {
 	t18_config_e,
 	t23_config_e,
 	t25_config_e,
+	t38_config_e,
 	t40_config_e,
 	t42_config_e,
 	t46_config_e,
@@ -6662,19 +6665,19 @@ static struct sec_jack_buttons_zone sec_jack_buttons_zones[] = {
 		/* send/end */
 		.code		= KEY_MEDIA,
 		.adc_low	= 0,
-		.adc_high	= 140,
+		.adc_high	= 170,
 	},
 	{
 		/* vol+*/
 		.code		= KEY_PREVIOUSSONG,
-		.adc_low	= 142,
+		.adc_low	= 171,
 		.adc_high	= 370,
 	},
 	{
 		/* vol- */
 		.code		= KEY_NEXTSONG,
-		.adc_low	= 380,
-		.adc_high	= 820,
+		.adc_low	= 371,
+		.adc_high	= 850,
 	},
 };
 #else

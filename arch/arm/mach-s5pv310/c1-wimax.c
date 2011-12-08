@@ -188,14 +188,20 @@ static void display_gpios(void)
 
 static int gpio_wimax_power(int enable)
 {
+	int try_count = 0;
+
 	if (!enable)
 		goto wimax_power_off;
 	if (gpio_get_value(GPIO_WIMAX_EN)) {
 		dump_debug("Already Wimax powered ON");
 		return WIMAX_ALREADY_POWER_ON;
 	}
-	while (!wimax_config.card_removed)
+	while (!wimax_config.card_removed) {
+		try_count++;
 		msleep(100);
+		if (try_count == 50)
+			break;
+	}
 	dump_debug("Wimax power ON");
 	if (wimax_config.wimax_mode != SDIO_MODE) {
 		switch_usb_wimax();
@@ -218,8 +224,10 @@ static int gpio_wimax_power(int enable)
 	wimax_hsmmc_presence_check();
 	return WIMAX_POWER_SUCCESS;
  wimax_power_off:
+	mutex_lock(&wimax_config.poweroff_mutex);
 	if (!gpio_get_value(GPIO_WIMAX_EN)) {
 		dump_debug("Already Wimax powered OFF");
+		mutex_unlock(&wimax_config.poweroff_mutex);
 		return WIMAX_ALREADY_POWER_OFF;	/* already power off */
 	}
 	while (!wimax_config.powerup_done) {
@@ -236,6 +244,7 @@ static int gpio_wimax_power(int enable)
 		s3c_bat_use_wimax(0);
 	}
 	wimax_on_pin_conf(0);
+	mutex_unlock(&wimax_config.poweroff_mutex);
 
 	return WIMAX_POWER_SUCCESS;
 }
