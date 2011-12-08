@@ -20,6 +20,7 @@
 ## ===========================
 */
 
+
 #define __CYAS_SYSFS_FOR_DIAGNOSTICS__
 
 typedef enum cy_as_diag_cmd_type {

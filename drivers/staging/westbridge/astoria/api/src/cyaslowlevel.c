@@ -278,7 +278,12 @@ cy_as_mail_box_process_data(cy_as_device *dev_p, uint16_t *data)
 	ctxt_p = dev_p->context[context] ;
 
 	if (cy_as_mbox_is_request(data[0])) {
-		cy_as_hal_assert(ctxt_p->req_p != 0) ;
+		//cy_as_hal_assert(ctxt_p->req_p != 0) ;
+		if( ctxt_p->req_p == 0)
+		{
+			cy_as_hal_print_message(KERN_ERR"mailbox process : request pointer NULL \n");
+			return;
+		}
 		rec_p = ctxt_p->req_p ;
 		len_p = &ctxt_p->request_length ;
 

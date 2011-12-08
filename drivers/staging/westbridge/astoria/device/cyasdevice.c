@@ -256,10 +256,26 @@ static void cy_wq_function (struct work_struct *work)
 		{
 			cy_as_hal_print_message(KERN_ERR"[cyasdevice.c] %s: cyasblkdev_blk_init\n", __func__) ;
 			cy_as_device_controller->cy_work->f_status = 0x1;
-			if( cyasblkdev_blk_init(0, 0) )
-			{
-				cyasblkdev_blk_exit();
 
+			retry_count = 2;
+
+			while( retry_count-- )
+			{
+				ret = cyasblkdev_blk_init(0, 0);
+
+				if( ret )
+				{
+					cyasblkdev_blk_exit();
+					msleep(10);
+					cyasdevice_reload_firmware(-1);
+					msleep(10);
+				}
+				else
+					break;
+			}
+
+			if( ret )
+			{
 				down(&cy_as_device_controller->wq_sema);
 				cyasdevice_enter_standby();
 				up(&cy_as_device_controller->wq_sema);
