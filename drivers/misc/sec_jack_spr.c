@@ -39,7 +39,7 @@
 
 #define MAX_ZONE_LIMIT		10
 /* keep this value if you support double-pressed concept */
-#define SEND_KEY_CHECK_TIME_MS	250		/* 250ms */
+#define SEND_KEY_CHECK_TIME_MS	40		/* 250ms */
 #define WAKE_LOCK_TIME		(HZ * 5)	/* 5 sec */
 #define EAR_CHECK_LOOP_CNT	10
 
