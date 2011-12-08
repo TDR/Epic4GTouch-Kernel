@@ -53,7 +53,7 @@ struct wimax_cfg{
         struct wake_lock        wimax_wake_lock;        /* resume wake lock */
         struct wake_lock        wimax_rxtx_lock;/* sdio wake lock */
         struct wake_lock        wimax_tx_lock;/* sdio tx lock */
-        struct mutex suspend_mutex;
+	struct mutex		poweroff_mutex; /*To avoid executing poweroff simultaneously*/
 	u_char          enable_dump_msg;
         u8              wimax_status;
         u8              wimax_mode;/* wimax mode (SDIO, USB, etc..) */
@@ -63,6 +63,7 @@ struct wimax_cfg{
                                                  * card removal
                                                  */
 	u8		powerup_done;
+	int		modem_reset_flag;
 };
 
 struct wimax732_platform_data {
@@ -80,6 +81,7 @@ struct wimax732_platform_data {
         struct wimax_cfg *g_cfg;
         struct miscdevice swmxctl_dev;
         int wimax_int;
+	struct notifier_block pm_notifier;
 };
 
 #endif

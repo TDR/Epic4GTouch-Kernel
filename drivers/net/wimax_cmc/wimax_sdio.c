@@ -33,6 +33,8 @@
 #include <linux/fs.h>
 #include <linux/platform_device.h>
 #include <linux/wimax/samsung/wimax732.h>
+#include <linux/notifier.h>
+#include <linux/suspend.h>
 /* driver Information */
 #define WIMAX_DRIVER_VERSION_STRING "3.0.0"
 #define DRIVER_AUTHOR "Samsung"
@@ -130,13 +132,14 @@ int swmxdev_ioctl(struct inode *inode, struct file *file,
 				}
 				gpdata->power(0);
 				gpdata->g_cfg->wimax_mode = val;
+				msleep(500);  //for gurantee the bootloader initializing time
 				ret = gpdata->power(1);
 				break;
 			}
 	case CONTROL_IOCTL_WIMAX_EEPROM_DOWNLOAD: {
 				dump_debug("CNT_IOCTL_WIMAX_EEPROM_DOWNLOAD");
 				gpdata->power(0);
-				eeprom_write_boot();
+				ret = eeprom_write_boot();
 				break;
 			}
 	case CONTROL_IOCTL_WIMAX_SLEEP_MODE: {
@@ -152,7 +155,7 @@ int swmxdev_ioctl(struct inode *inode, struct file *file,
 	case CONTROL_IOCTL_WIMAX_WRITE_REV: {
 			dump_debug("CONTROL_IOCTL_WIMAX_WRITE_REV");
 			gpdata->power(0);
-			eeprom_write_rev();
+			ret = eeprom_write_rev();
 			break;
 			}
 	case CONTROL_IOCTL_WIMAX_CHECK_CERT: {
@@ -308,7 +311,7 @@ int uwbrdev_ioctl(struct inode *inode, struct file *file, u_int cmd, u_long arg)
 	adapter = (struct net_adapter *)(file->private_data);
 
 	if ((adapter == NULL) || adapter->halted) {
-		dump_debug("can't find adapter or Device Removed");
+		dump_debug("%s: can't find adapter or Device Removed", __func__);
 		return -ENODEV;
 	}
 
@@ -364,7 +367,7 @@ ssize_t uwbrdev_read(struct file *file, char *buf, size_t count, loff_t *ppos)
 
 	adapter = (struct net_adapter *)(file->private_data);
 	if ((adapter == NULL) || adapter->halted) {
-		dump_debug("can't find adapter or Device Removed");
+		dump_debug("%s: can't find adapter or Device Removed", __func__);
 		return -ENODEV;
 	}
 
@@ -581,7 +584,6 @@ int adapter_ioctl(struct net_device *net, struct ifreq *rq, int cmd)
 	return 0;
 }
 
-
 void adapter_sdio_rx_worker(struct work_struct *work)
 {
 	struct net_adapter              *adapter;
@@ -622,7 +624,6 @@ void adapter_sdio_rx_worker(struct work_struct *work)
 
 	if (unlikely(err  || (!len))) {
 		dump_debug("!hwSdioReadCounter in adapter_sdio_rx_worker!");
-		adapter->halted = TRUE;
 		sdio_release_host(adapter->func);
 		return;
 	}
@@ -651,13 +652,46 @@ void adapter_sdio_rx_worker(struct work_struct *work)
 		t_index += t_size;
 	}
 
+	if (unlikely(!len))
+		dump_debug("Packet length information zero\n");
 
-	if (unlikely(err  || (!len))) {
+	if (unlikely(err)) {
 		dump_debug("adapter_sdio_rx_worker :	\
 				error in receiving packet!!drop	the	\
 				packet errt = %d, len = %d", err, len);
-		adapter->netstats.rx_errors++;
+		
+		/*Restart CMC732 SDIO*/
+		sdio_release_irq(adapter->func);
+		err = cmc732_sdio_reset_comm(adapter->func->card);
+		if (err < 0)
+			dump_debug("cmc732_sdio_reset_comm error = %d", err);
+		err = sdio_enable_func(adapter->func);
+		if (err < 0)
+			dump_debug("sdio_enable_func error = %d", err);
+		err = sdio_claim_irq(adapter->func, adapter_interrupt);
+		if (err < 0)
+			dump_debug("sdio_claim_irq error = %d", err);
+		err = sdio_set_block_size(adapter->func, 512);
+		if (err < 0)
+			dump_debug("sdio_set_block_size error = %d", err);
 
+		/*Now, retry the block read again.
+                * the reset does not seem to succeed
+                * without this block read below..
+                * Most likely, this has something to do
+                * with the host controller state because
+                * we get a ADMA error for the below
+                * attempt on C110 BSP. But from there on,
+                * everything works just fine*/
+		err = sdio_memcpy_fromio(adapter->func, adapter->hw.receive_buffer,
+			(SDIO_RX_BANK_ADDR + (SDIO_BANK_SIZE * nReadIdx) + 4), len);
+		if (unlikely(err)) {
+			dump_debug("adapter_sdio_rx_worker :	\
+				error in receiving packet!!	\
+				after sdio reset, drop the packet	\
+				 errt = %d, len = %d", err, len);
+		adapter->netstats.rx_errors++;
+	}
 	}
 
 	sdio_release_host(adapter->func);
@@ -680,7 +714,7 @@ void adapter_interrupt(struct sdio_func *func)
 	int				err;
 	int				intrd = 0;
 
-	wake_lock_timeout(&adapter->pdata->g_cfg->wimax_rxtx_lock, 0.2 * HZ);
+	wake_lock_timeout(&adapter->pdata->g_cfg->wimax_rxtx_lock, HZ/5);
 
 	if (likely(!adapter->halted)) {
 		/* read interrupt identification register */
@@ -850,6 +884,7 @@ void adapter_remove(struct sdio_func *func)
 {
 	struct net_adapter	*adapter = sdio_get_drvdata(func);
 
+	dump_debug("%s!!!!!!", __func__);
 	if (!adapter) {
 		dump_debug("unregistering non-bound device?");
 		return;
@@ -1111,6 +1146,43 @@ static DEVICE_ATTR(wmxuart, 0664, wmxuart_show, wmxuart_store);
 static DEVICE_ATTR(dump, 0664, dump_show, dump_store);
 static DEVICE_ATTR(sleepmode, 0664, NULL, NULL);
 
+static int modem_reset_pm_callback(struct notifier_block *nfb, 
+				unsigned long action, void *ignored)
+{
+        int ret = NOTIFY_DONE;
+	struct wimax732_platform_data *pdata = container_of(nfb, 
+						struct wimax732_platform_data,
+						pm_notifier);
+
+        switch (action) {
+                case PM_HIBERNATION_PREPARE:
+                case PM_SUSPEND_PREPARE:
+                        pdata->g_cfg->modem_reset_flag = false;
+			dump_debug("PM_SUSPEND_PREPARE: wimax");
+                        ret = NOTIFY_OK;
+                	break;
+                case PM_POST_HIBERNATION:
+                case PM_POST_SUSPEND:
+                        pdata->g_cfg->modem_reset_flag = true;
+			dump_debug("PM_POST_SUSPEND: wimax");
+                        ret = NOTIFY_OK;
+                	break;
+		default:
+			break;
+        }
+        return ret;
+}
+
+static void modem_reset_register_pm_notifier(struct wimax732_platform_data *pdata)
+{
+        pdata->pm_notifier.notifier_call = modem_reset_pm_callback;
+        register_pm_notifier(&pdata->pm_notifier);
+}
+
+static void modem_reset_unregister_pm_notifier(struct wimax732_platform_data *pdata)
+{
+        unregister_pm_notifier(&pdata->pm_notifier);
+}
 
 static int wimax_probe(struct platform_device *pdev)
 {
@@ -1132,7 +1204,7 @@ static int wimax_probe(struct platform_device *pdev)
 		dump_debug("misc_register() failed");
 		return error;
 	}
-	mutex_init(&pdata->g_cfg->suspend_mutex);
+	mutex_init(&pdata->g_cfg->poweroff_mutex); 
 
 	for (i = 0; i < ARRAY_SIZE(adapter_table); i++)
 		adapter_table[i].driver_data =
@@ -1146,6 +1218,8 @@ static int wimax_probe(struct platform_device *pdev)
 	}
 
 	pdata->g_cfg->card_removed = true;
+	pdata->g_cfg->modem_reset_flag = true;
+	modem_reset_register_pm_notifier(pdata);
 	pdata->power(0);
 	/*Wimax sys entry*/
 
@@ -1203,7 +1277,6 @@ static int wimax_probe(struct platform_device *pdev)
 	wake_lock_init(&pdata->g_cfg->wimax_tx_lock,
 			WAKE_LOCK_SUSPEND, "wimax_tx");
 
-
 	return error;
 }
 
@@ -1212,11 +1285,13 @@ static int wimax_remove(struct platform_device *pdev)
 	struct wimax732_platform_data   *pdata = pdev->dev.platform_data;
 	dump_debug("SDIO driver Uninstall");
 
+	mutex_destroy(&pdata->g_cfg->poweroff_mutex);
 	/* destroy wake locks */
 	wake_lock_destroy(&pdata->g_cfg->wimax_wake_lock);
 	wake_lock_destroy(&pdata->g_cfg->wimax_rxtx_lock);
 	wake_lock_destroy(&pdata->g_cfg->wimax_tx_lock);
 	class_destroy(pdata->wimax_class);
+	modem_reset_unregister_pm_notifier(pdata);
 	sdio_unregister_driver(&adapter_driver);
 	misc_deregister(&pdata->swmxctl_dev);
 	return 0;
@@ -1229,12 +1304,6 @@ int wimax_suspend(struct platform_device *pdev, pm_message_t state)
 	struct wimax732_platform_data   *pdata = pdev->dev.platform_data;
 
 	dump_debug("[wimax] %s", __func__);
-
-	if (!mutex_trylock(&pdata->g_cfg->suspend_mutex)) {
-		pr_debug("wimax send processing\n");
-		return -EBUSY;
-	}
-
 
 	/* AP active pin LOW */
 	pdata->signal_ap_active(0);
@@ -1266,7 +1335,6 @@ int wimax_resume(struct platform_device *pdev)
 	/* wait wakeup noti for 1 sec otherwise suspend again */
 	wake_lock_timeout(&pdata->g_cfg->wimax_wake_lock, 1 * HZ);
 
-	mutex_unlock(&pdata->g_cfg->suspend_mutex);
 	return 0;
 }
 

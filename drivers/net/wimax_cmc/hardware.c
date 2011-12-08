@@ -27,6 +27,7 @@ static void wimax_hostwake_task(unsigned long data)
 	struct wimax_cfg *g_cfg = adapter->pdata->g_cfg;
 
 	wake_lock_timeout(&g_cfg->wimax_wake_lock, 1 * HZ);
+
 }
 
 static irqreturn_t wimax_hostwake_isr(int irq, void *dev)
@@ -227,8 +228,11 @@ void hw_remove(struct net_adapter *adapter)
 int con0_poll_thread(void *data)
 {
 	struct net_adapter *adapter = (struct net_adapter *)data;
+	struct wimax_cfg *g_cfg = adapter->pdata->g_cfg;
 	int prev_val = 0;
 	int curr_val = 0;
+	
+	wake_lock(&g_cfg->wimax_tx_lock);
 
 	while ((!adapter->halted)) {
 		curr_val = gpio_get_value(GPIO_WIMAX_CON0);
@@ -239,6 +243,7 @@ int con0_poll_thread(void *data)
 		prev_val = curr_val;
 		msleep(40);
 		}
+	wake_unlock(&g_cfg->wimax_tx_lock);
 	do_exit(0);
 	return 0;
 }
@@ -253,7 +258,7 @@ void hw_get_mac_address(void *data)
 	struct net_adapter *adapter = (struct net_adapter *)data;
 	struct hw_private_packet	req;
 	int				nResult = 0;
-	int				retry = 3;
+	int				retry = 5;
 	req.id0 = 'W';
 	req.id1 = 'P';
 	req.code = HwCodeMacRequest;
@@ -262,6 +267,9 @@ void hw_get_mac_address(void *data)
 		if (adapter == NULL)
 			break;
 
+		if (retry == 2) //odb backup takes 5.8sec
+			msleep(6000);
+			
 		sdio_claim_host(adapter->func);
 		nResult = sd_send(adapter, (u_char *)&req,
 				sizeof(struct hw_private_packet));
@@ -476,7 +484,7 @@ int hw_device_wakeup(struct net_adapter *adapter)
 		if (rc > WAKEUP_MAX_TRY) {
 				dump_debug("hw_device_wakeup (CON0 status):"
 					" modem wake up time out!!");
-				break;
+				return -1;
 			}
 		msleep(WAKEUP_TIMEOUT/2);
 		adapter->pdata->wakeup_assert(0);
@@ -495,29 +503,24 @@ int hw_device_wakeup(struct net_adapter *adapter)
 This Work is responsible for Transmiting Both Control And Data packet
 */
 
-
 void hw_transmit_thread(struct work_struct *work)
 {
 	struct buffer_descriptor        *dsc;
 	struct hw_private_packet        hdr;
 	struct net_adapter              *adapter;
 	int				nRet = 0;
+	int				modem_reset = false;
+
 	adapter = container_of(work, struct net_adapter, transmit_work);
 	struct wimax_cfg *g_cfg = adapter->pdata->g_cfg;
-	wake_lock_timeout(&g_cfg->wimax_rxtx_lock, 0.2 * HZ);
+	wake_lock(&g_cfg->wimax_tx_lock);
 
-	mutex_lock(&adapter->rx_lock);
 	if (!gpio_get_value(WIMAX_EN)) {
 		dump_debug("WiMAX Power OFF!! (TX)");
-		adapter->halted = TRUE;
-		return;
+		goto exit;
 	}
 
-
-	/* prevent WiMAX modem suspend during tx phase */
-	 mutex_lock(&g_cfg->suspend_mutex);
-
-	hw_device_wakeup(adapter);
+	mutex_lock(&adapter->rx_lock);
 
 	while (!queue_empty(adapter->hw.q_send.head)) {
 		if (adapter->halted) {
@@ -531,8 +534,20 @@ void hw_transmit_thread(struct work_struct *work)
 				sizeof(struct hw_private_packet)))
 				dump_debug("halted,"
 					" send HaltIndication to FW err");
+			modem_reset = true;
 			break;
 		}
+
+		if (!g_cfg->modem_reset_flag) {
+			dump_debug("modem_reset_flag is not set");
+			break;
+		}
+		
+		if(hw_device_wakeup(adapter)) {
+			modem_reset = true;
+			break;
+		}
+			
 		dsc = (struct buffer_descriptor *)
 			queue_get_head(adapter->hw.q_send.head);
 
@@ -543,7 +558,6 @@ void hw_transmit_thread(struct work_struct *work)
 
 		if (!dsc) {
 			dump_debug("Fail...node is null");
-			 mutex_unlock(&g_cfg->suspend_mutex);
 			break;
 		}
 
@@ -554,19 +568,31 @@ void hw_transmit_thread(struct work_struct *work)
 		kfree(dsc->buffer);
 		kfree(dsc);
 		if (nRet != STATUS_SUCCESS) {
-			dump_debug("SendData Fail******");
+			sdio_claim_host(adapter->func);
+			sdio_release_irq(adapter->func);
+			sdio_release_host(adapter->func);
 			++adapter->XmitErr;
+			dump_debug("SendData Fail******");
 			if (nRet == -ENOMEDIUM || nRet == /*-ETIMEOUT*/-110) {
-				adapter->halted = TRUE;
-				break;
+				dump_debug("%s: No medium or timeout error", __func__);
+			//	adapter->halted = TRUE;				
 			}
+			modem_reset = true;
+			break;
 		}
 	}
-
-	mutex_unlock(&g_cfg->suspend_mutex);
+	
+	if(modem_reset) {
+		while (!g_cfg->modem_reset_flag) {
+			dump_debug("Waiting for PM_POST_SUSPEND notifier");
+			msleep(100);
+		}
+		adapter->pdata->power(0);
+		dump_debug("Modem reset done");
+	}
 
 	mutex_unlock(&adapter->rx_lock);
-
-
+exit:
+	wake_unlock(&g_cfg->wimax_tx_lock);
 	return ;
 }

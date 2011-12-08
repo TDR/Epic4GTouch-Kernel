@@ -8,10 +8,10 @@
 //#define DRIVER_BIT_BANG
 
 /* Write WiMAX boot image to EEPROM */
-void eeprom_write_boot(void);
+int eeprom_write_boot(void);
 
 /* Write HW rev to EEPROM */
-void eeprom_write_rev(void);
+int eeprom_write_rev(void);
 
 /* Erase WiMAX certification */
 void eeprom_erase_cert(void);

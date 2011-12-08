@@ -140,7 +140,6 @@ u_long process_private_cmd(struct net_adapter *adapter, void *buffer)
 	}
 	case HwCodeHaltedIndication: {
 		dump_debug("Device is about to reset, stop driver");
-		adapter->halted = TRUE;
 		break;
 	}
 	case HwCodeRxReadyIndication: {

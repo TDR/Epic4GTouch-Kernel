@@ -434,7 +434,7 @@ int load_wimax_boot(void)
 	return 0;
 }
 
-void write_rev(void)
+int write_rev(void)
 {
 	u_int	val;
 	int retry = 100;
@@ -452,6 +452,7 @@ void write_rev(void)
 	while(err<0?((retry--)>0):0);
 	if(retry<0)
 		dump_debug("eeprom error");
+	return err ;
 }
 
 void erase_cert(void)
@@ -663,7 +664,7 @@ void eeprom_erase_all()
 }
 
 /* Write boot image to EEPROM */
-void eeprom_write_boot(void)
+int eeprom_write_boot(void)
 {
 	u_char	*buffer;
 	int retry = 1000;
@@ -720,15 +721,19 @@ void eeprom_write_boot(void)
 	}else{
 	dump_debug("EEPROM WRITING DONE.");
 }
+	return err;
 }
 
-void eeprom_write_rev(void)
+int eeprom_write_rev(void)
 {
+	int ret;
+
 	eeprom_poweron();
-	write_rev();	/* write hw rev to eeprom */
+	ret = write_rev();	/* write hw rev to eeprom */
 	eeprom_poweroff();
 
 	dump_debug("REV WRITING DONE.");
+	return ret;
 }
 
 void eeprom_erase_cert(void)
