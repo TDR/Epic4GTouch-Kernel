@@ -25,6 +25,13 @@
 #define CMD_TRUE	                                1
 #define CMD_FALSE	                                -1
 
+#define CMD_DL_SEND_DONE_REQ                            0x9600
+#define CMD_PHONE_BOOT_UPDATE							0x0001
+#define MASK_CMD_SEND_DONE_RESPONSE                     0x0700
+#define MASK_CMD_STATUS_UPDATE_NOTIFICATION             0x0800
+#define MASK_CMD_UPDATE_DONE_NOTIFICATION               0x0900
+#define MASK_CMD_IMAGE_SEND_RESPONSE                    0x0500
+
 /* Result mask */
 #define MASK_CMD_RESULT_FAIL                        	0x0002
 #define MASK_CMD_RESULT_SUCCESS                     	0x0001
@@ -63,6 +70,7 @@
 #define IOCTL_CHK_STAT                                  _IO('D', 0x2)
 #define IOCTL_MOD_PWROFF                                _IO('D', 0x3)
 #define IOCTL_WRITE_MAGIC_CODE                          _IO('D', 0x4)
+#define IOCTL_ST_FW_DOWNLOAD                            _IO('D', 0x5)
 
 #define GPIO_QSC_INT                                    GPIO_C210_DPRAM_INT_N
 #define IRQ_QSC_INT                                     GPIO_QSC_INT
@@ -110,6 +118,7 @@ S5PC100 overwrites tha data in INT2AP if there are INT2AP and INT2MSM sharing th
 struct dpram_firmware {
     char *firmware;
     int size;
+    int image_type;
 };
 
 struct stat_info {
@@ -117,7 +126,8 @@ struct stat_info {
 	char msg[DPRAM_MODEM_MSG_SIZE];
 };
 
-
+#define DPRAM_MODEM_DELTA_IMAGE				0
+#define DPRAM_MODEM_FULL_IMAGE				1
 
 #endif	/* __DPRAM_RECOVERY_H__ */
 

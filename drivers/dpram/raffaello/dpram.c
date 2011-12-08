@@ -249,8 +249,7 @@ static atomic_t fmt_txq_req_ack_rcvd;
 struct delayed_work phone_active_work;
 
 /* For Dual Core*/
-static DECLARE_MUTEX(mux_net_lock);
-static DECLARE_MUTEX(mux_tty_lock);
+static DEFINE_SPINLOCK(mux_tty_lock);
 
 
 /*
@@ -1290,10 +1289,18 @@ static void dpram_send_mbx_BA_cmd(u16 irq_mask)
     if (g_dump_on)
         return;
 
+    /* Set GPIO_PDA_ACTIVE as CP sometimes seems to read this pin as Low */
+    gpio_set_value(GPIO_PDA_ACTIVE, GPIO_LEVEL_HIGH);
+
     while (gpio_get_value(GPIO_DPRAM_INT_CP_N) == 0 && retry_cnt--)
     {
         msleep(1);
         LOGE("send cmd intr, retry cnt = %d\n", (DPRAM_CMD_SEND_RETRY_CNT-retry_cnt));
+	
+	/* Set GPIO_PDA_ACTIVE as CP sometimes seems to read this pin as Low */
+	LOGA("Current GPIO_PDA_ACTIVE =  %d\n", gpio_get_value(GPIO_PDA_ACTIVE) );
+	gpio_set_value(GPIO_PDA_ACTIVE, GPIO_LEVEL_HIGH);
+	LOGA("GPIO_PDA_ACTIVE =  %d\n", gpio_get_value(GPIO_PDA_ACTIVE) );	
     }
 
 #ifdef CDMA_IPC_C210_IDPRAM
@@ -2188,6 +2195,11 @@ static void cmd_error_display_handler(void)
     memcpy(dpram_err_buf, buf, DPRAM_ERR_MSG_LEN);
     dpram_err_len = 64;
 
+
+    LOGE("start wake_lock_timeout: during 20sec\n");
+    wake_lock_timeout(&dpram_wake_lock, HZ*20);
+
+
     /* goto Upload mode : receive C9 */
     if ((sec_debug_level())&&(dpram_err_cause != UPLOAD_CAUSE_CDMA_RESET))
     {
@@ -2215,8 +2227,15 @@ static void cmd_phone_start_handler(void)
 {
     LOGA("Received CMD_PHONE_START!!! %d\n", g_phone_sync);
 
-    if (g_phone_sync == 0)
+    if (g_phone_sync == 0) {
+	/* Set GPIO_PDA_ACTIVE as CP sometimes seems to read this pin as Low */
+	LOGA("Current GPIO_PDA_ACTIVE =  %d\n", gpio_get_value(GPIO_PDA_ACTIVE) );
+	gpio_set_value(GPIO_PDA_ACTIVE, GPIO_LEVEL_HIGH);
+
         dpram_init_and_report();
+
+	LOGA("GPIO_PDA_ACTIVE =  %d\n", gpio_get_value(GPIO_PDA_ACTIVE) );
+    }
 }
 
 
@@ -2767,56 +2786,66 @@ static void vs_close(struct tty_struct *tty, struct file *filp)
 
 static int pdp_mux(struct pdp_info *dev, const void *data, size_t len   )
 {
-    int ret;
-    size_t nbytes;
-    u8 *tx_buf;
-    struct pdp_hdr *hdr;
-    const u8 *buf;
+	int ret;
+	size_t nbytes;
+	u8 *tx_buf;
+	struct pdp_hdr *hdr;
+	const u8 *buf;
 
-	/* For Dual Core*/
-	down(&mux_tty_lock);
+	int in_softirq_context = in_softirq();
 
-    tx_buf = dev->tx_buf;
-    hdr = (struct pdp_hdr *)(tx_buf + 1);
-    buf = data;
+	/* check current context */
+	if (in_softirq_context)
+		spin_lock(&mux_tty_lock);
+	else
+		spin_lock_bh(&mux_tty_lock);
 
-    hdr->id = dev->id;
-    hdr->control = 0;
+	tx_buf = dev->tx_buf;
+	hdr = (struct pdp_hdr *)(tx_buf + 1);
+	buf = data;
 
-    while (len)
-    {
-        if (len > MAX_PDP_DATA_LEN)
-        {
-            nbytes = MAX_PDP_DATA_LEN;
-        }
-        else
-        {
-            nbytes = len;
-        }
-        hdr->len = nbytes + sizeof(struct pdp_hdr);
+	hdr->id = dev->id;
+	hdr->control = 0;
 
-        tx_buf[0] = 0x7f;
+	while (len) {
+		if (len > MAX_PDP_DATA_LEN) {
+			nbytes = MAX_PDP_DATA_LEN;
+		} else {
+			nbytes = len;
+		}
+		hdr->len = nbytes + sizeof(struct pdp_hdr);
 
-        memcpy(tx_buf + 1 + sizeof(struct pdp_hdr), buf,  nbytes);
+		tx_buf[0] = 0x7f;
 
-        tx_buf[1 + hdr->len] = 0x7e;
+		memcpy(tx_buf + 1 + sizeof(struct pdp_hdr), buf, nbytes);
 
-        ret = dpram_write(&dpram_table[RAW_INDEX], tx_buf, hdr->len + 2);
+		tx_buf[1 + hdr->len] = 0x7e;
 
-        if (ret < 0)
-        {
-            LOGE("write_to_dpram() failed: %d\n", ret);
-			/* For Dual Core*/
-			up(&mux_tty_lock);
-            return ret;
-        }
-        buf += nbytes;
-        len -= nbytes;
-    }
+		ret =
+		    dpram_write(&dpram_table[RAW_INDEX], tx_buf, hdr->len + 2);
 
-	/* For Dual Core*/
-	up(&mux_tty_lock);
-    return 0;
+		if (ret < 0) {
+			LOGE("write_to_dpram() failed: %d\n", ret);
+			/* check curent context */
+			if (in_softirq_context)
+				spin_unlock(&mux_tty_lock);
+			else
+				spin_unlock_bh(&mux_tty_lock);
+
+			return ret;
+		}
+		buf += nbytes;
+		len -= nbytes;
+	}
+
+	/* check curent context */
+	if (in_softirq_context)
+		spin_unlock(&mux_tty_lock);
+	else
+		spin_unlock_bh(&mux_tty_lock);
+
+	return 0;
+
 }
 
 
@@ -3474,6 +3503,13 @@ static int dpram_suspend(struct platform_device *dev, pm_message_t state)
         {
             LOGE("T-I-M-E-O-U-T !!! (intr = 0x%04X)\n", in_intr);
             g_dpram_wpend = IDPRAM_WPEND_UNLOCK; // dpram write unlock
+
+	    if (g_phone_sync == 0)
+	    {
+	    	LOGE("phone_sync: [%d] retry Phone reset and on\n", g_phone_sync);
+		dpram_phone_reset();
+		dpram_phone_power_on();
+	    }
             return -1;
         }
 
