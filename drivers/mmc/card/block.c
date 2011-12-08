@@ -59,6 +59,22 @@ MODULE_ALIAS("mmc:block");
 #endif
 #endif
 
+#if defined(CONFIG_MACH_C1_NA_SPR_REV05) || defined(CONFIG_MACH_C1_NA_SPR_REV02)
+#define MOVI_DEBUG /* It's for debugging on Gaudi(D710) */
+
+#ifdef MOVI_DEBUG
+#include <mach/gpio.h>
+typedef struct{
+	u32 cmd;
+	u32 arg;
+	u32 cnt;
+	u32 rsp;
+	u32 stoprsp;
+} CMD_LOG;
+static CMD_LOG gaCmdLog[5];
+static int gnCmdLogIdx;
+#endif
+#endif
 /*
  * max 16 partitions per card
  */
@@ -183,6 +199,7 @@ static int mmc_blk_ioctl(struct block_device *bdev, fmode_t mode,
 			mmc_claim_host(card->host);
 			if (!mmc_can_trim(card)) {
 				printk(KERN_ERR "MMCERASEINFO ioctl: MMC can not support trim operation.\n");
+				mmc_release_host(card->host);
 				return -EOPNOTSUPP;
 			}
 			info.pref_trim = card->pref_trim;
@@ -629,6 +646,19 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 
 		mmc_queue_bounce_post(mq);
 
+#ifdef MOVI_DEBUG
+		if (card->type == MMC_TYPE_MMC) {
+			gaCmdLog[gnCmdLogIdx].cmd = brq.cmd.opcode;
+			gaCmdLog[gnCmdLogIdx].arg = brq.cmd.arg;
+			gaCmdLog[gnCmdLogIdx].cnt = brq.data.blocks;
+			gaCmdLog[gnCmdLogIdx].rsp = brq.cmd.resp[0];
+			gaCmdLog[gnCmdLogIdx].stoprsp = brq.stop.resp[0];
+			gnCmdLogIdx++;
+
+			if (gnCmdLogIdx >= 5)
+				gnCmdLogIdx = 0;
+		}
+#endif
 		/*
 		 * Check for errors here, but don't jump to cmd_err
 		 * until later as we need to wait for the card to leave
@@ -647,6 +677,105 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 			disable_multi = 0;
 		}
 
+#ifdef MOVI_DEBUG
+		if (brq.cmd.error) {
+			if (card->type == MMC_TYPE_MMC) {
+
+				/* get external ldo status */
+#if 0
+				printk(KERN_ERR "[MMC] EXTERNAL LDO is %d\n",
+						gpio_get_value(S5PV310_GPK0(2)));
+#endif
+				status = get_card_status(card, req);
+				if (!status) {
+					/* put the panic code here */
+					int err, i, j;
+					for (i = 0 ; i < 5 ; i++) {
+						printk(KERN_ERR "[CMD LOG] CMD:%d, ARG:0x%x, CNT:%d, RSP:0x%x, STRSP:0x%x\n",
+								gaCmdLog[gnCmdLogIdx].cmd,
+								gaCmdLog[gnCmdLogIdx].arg,
+								gaCmdLog[gnCmdLogIdx].cnt,
+								gaCmdLog[gnCmdLogIdx].rsp,
+								gaCmdLog[gnCmdLogIdx].stoprsp);
+						gnCmdLogIdx++;
+						if (gnCmdLogIdx >= 5)
+							gnCmdLogIdx = 0;
+					}
+
+					status = get_card_status(card, req);
+					printk(KERN_ERR "COMMAND13 response = 0x%x \n", status);
+
+					cmd.opcode = 12;
+					cmd.arg = 0;
+					cmd.flags = MMC_RSP_R1;
+					err = mmc_wait_for_cmd(card->host, &cmd, 0);
+					if (err) {
+						printk(KERN_ERR "%s: error %d CMD12\n",
+								req->rq_disk->disk_name, err);
+					}
+					printk("COMD12 RESP = 0x%x \n",
+							cmd.resp[0]);
+					msleep(100);
+
+					status = get_card_status(card, req);
+					printk("COMMAND13 response = 0x%x \n",
+							status);
+
+					mmc_set_clock(card->host, 400000);
+
+					for (i = 0 ; i < 3 ; i++) {
+						cmd.opcode = 1;
+						cmd.arg = 0x40ff8080;
+						cmd.flags = MMC_RSP_R3 | MMC_CMD_BCR;
+						err = mmc_wait_for_cmd(card->host, &cmd, 0);
+						if (err) {
+							printk(KERN_ERR "%s: error %d CMD0\n",
+									req->rq_disk->disk_name, err);
+						}
+						printk("COMD1 RESP = 0x%x \n",
+								cmd.resp[0]);
+						msleep(50);
+					}
+
+					for (i = 0 ; i < 3 ; i++) {
+
+						cmd.opcode = 0;
+						cmd.arg = 0x20110210;
+						cmd.flags = MMC_RSP_NONE | MMC_CMD_BC;
+						err = mmc_wait_for_cmd(card->host, &cmd, 0);
+						if (err) {
+							printk(KERN_ERR "%s: error %d CMD0\n",
+									req->rq_disk->disk_name, err);
+						}
+						msleep(50);
+						cmd.opcode = 0;
+						cmd.arg = 0x60FACC06;
+						cmd.flags = MMC_RSP_NONE | MMC_CMD_BC;
+						err = mmc_wait_for_cmd(card->host, &cmd, 0);
+						if (err) {
+							printk(KERN_ERR "%s: error %d CMD0\n",
+									req->rq_disk->disk_name, err);
+						}
+						for (j = 0 ; j < 3 ; j++) {
+							msleep(50);
+							cmd.opcode = 1;
+							cmd.arg = 0x0;
+							cmd.flags = MMC_RSP_R3 | MMC_CMD_BCR;
+							err = mmc_wait_for_cmd(card->host, &cmd, 0);
+							if (err) {
+								printk(KERN_ERR "%s: error %d CMD0\n",
+										req->rq_disk->disk_name, err);
+							}
+
+							printk(KERN_ERR "COMD1 RESP = 0x%x \n",
+									cmd.resp[0]);
+						}
+					}
+					panic(" MOVINAND DEBUG PANIC \n");
+				}
+			}
+		}
+#endif
 		if (brq.cmd.error) {
 			printk(KERN_ERR "%s: error %d sending read/write "
 			       "command, response %#x, card status %#x\n",
@@ -1010,6 +1139,9 @@ static int __init mmc_blk_init(void)
 {
 	int res;
 
+#ifdef MOVI_DEBUG
+	gnCmdLogIdx = 0;
+#endif
 	res = register_blkdev(MMC_BLOCK_MAJOR, "mmc");
 	if (res)
 		goto out;
