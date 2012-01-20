@@ -882,6 +882,15 @@ static irqreturn_t touchkey_interrupt(int irq, void *dummy)
 #ifdef CONFIG_HAS_EARLYSUSPEND
 static int melfas_touchkey_early_suspend(struct early_suspend *h)
 {
+	int ret;
+
+	disable_irq(IRQ_TOUCH_INT);
+	ret = cancel_work_sync(&touchkey_work);
+	if( ret ) {
+		printk(KERN_DEBUG "[Touchkey] enable_irq ret=%d\n", ret);
+		enable_irq(IRQ_TOUCH_INT);
+	}
+
 #if defined(CONFIG_TARGET_LOCALE_NA) || defined(CONFIG_TARGET_LOCALE_NAATT)
 	 /* release key */
 	input_report_key(touchkey_driver->input_dev,
@@ -903,7 +912,6 @@ static int melfas_touchkey_early_suspend(struct early_suspend *h)
 		return 0;
 	}
 
-	disable_irq(IRQ_TOUCH_INT);
 	gpio_direction_input(_3_GPIO_TOUCH_INT);
 
 #if 0
