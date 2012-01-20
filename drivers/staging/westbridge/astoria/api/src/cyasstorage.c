@@ -175,6 +175,19 @@ my_storage_request_callback(cy_as_device *dev_p,
 	(void)context ;
 	(void)ret ;
 
+	if (req_p == NULL) {
+		cy_as_hal_print_message(KERN_ERR
+			"my_storage_request_callback : req_p is NULL\n");
+		if (dev_p != NULL) {
+			val = CY_RQT_SCSI_UNKNOWN_COMMAND;
+			cy_as_ll_send_data_response(dev_p,
+						    CY_RQT_STORAGE_RQT_CONTEXT,
+						    CY_RESP_INVALID_REQUEST,
+						    sizeof(val), &val);
+		}
+	return ;
+
+	}
 	switch (cy_as_ll_request_response__get_code(req_p)) {
 	case CY_RQT_MEDIA_CHANGED:
 		cy_as_ll_send_status_response(dev_p,

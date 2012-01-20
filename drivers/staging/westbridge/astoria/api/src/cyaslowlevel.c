@@ -386,6 +386,13 @@ cy_as_mail_box_process_data(cy_as_device *dev_p, uint16_t *data)
 			 * module to handle */
 			cy_as_ll_request_response *request_p = ctxt_p->req_p ;
 			ctxt_p->req_p = 0 ;
+
+		if (request_p == NULL) {
+			cy_as_hal_print_message(KERN_ERR
+				"mailbox process : request_p == NULL\n");
+			return;
+		}
+
 			if (ctxt_p->request_callback) {
 				cy_as_device_set_in_callback(dev_p) ;
 				ctxt_p->request_callback(dev_p, context,
