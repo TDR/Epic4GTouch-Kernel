@@ -1295,11 +1295,11 @@ static void dpram_send_mbx_BA_cmd(u16 irq_mask)
     {
         msleep(1);
         LOGE("send cmd intr, retry cnt = %d\n", (DPRAM_CMD_SEND_RETRY_CNT-retry_cnt));
-	
+
 	/* Set GPIO_PDA_ACTIVE as CP sometimes seems to read this pin as Low */
 	LOGA("Current GPIO_PDA_ACTIVE =  %d\n", gpio_get_value(GPIO_PDA_ACTIVE) );
 	gpio_set_value(GPIO_PDA_ACTIVE, GPIO_LEVEL_HIGH);
-	LOGA("GPIO_PDA_ACTIVE =  %d\n", gpio_get_value(GPIO_PDA_ACTIVE) );	
+	LOGA("GPIO_PDA_ACTIVE =  %d\n", gpio_get_value(GPIO_PDA_ACTIVE) );
     }
 
 #ifdef CDMA_IPC_C210_IDPRAM
@@ -1482,7 +1482,7 @@ static void dpram_phone_reset(void)
     PRINT_FUNC();
 
 	if(g_dpram_wpend == IDPRAM_WPEND_LOCK)
-		g_dpram_wpend = IDPRAM_WPEND_UNLOCK; // dpram write unlock	
+		g_dpram_wpend = IDPRAM_WPEND_UNLOCK; // dpram write unlock
 
 	/*Add for Gadui : Normal boot Magic - 0x54424D4E*/
     dpram_init_magic_num();
@@ -3069,8 +3069,6 @@ static int multipdp_init(void)
     pdp_arg_t pdp_args[NUM_PDP_CONTEXT] = {
         { .id = 1, .ifname = "ttyCSD" },
         { .id = 7, .ifname = "ttyCDMA" },
-        { .id = 9, .ifname = "ttyTRFB" },
-        { .id = 27, .ifname = "ttyCIQ" },
         { .id = 29, .ifname = "ttyCPLOG" },
     };
 

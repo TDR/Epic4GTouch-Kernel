@@ -264,7 +264,9 @@ typedef struct {
 ** MULTI PDP DEFINITIONs
 */
 #define APP_DEVNAME                 "multipdp"  /* Device node name for application interface */
-#define NUM_PDP_CONTEXT             5           /* number of PDP context */
+
+#define NUM_PDP_CONTEXT             3           /* number of PDP context */
+
 /* Device types */
 #define DEV_TYPE_NET                0           /* network device for IP data */
 #define DEV_TYPE_SERIAL             1           /* serial device for CSD */
